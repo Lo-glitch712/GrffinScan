@@ -36,34 +36,38 @@ export default function StudentPage() {
     lastname = lastname.trim();
     firstname = firstname.trim();
 
-    const existingStudentById = findStudentById(id);
+    try {
+      const existingStudentById = await findStudentById(id);
 
-    if (existingStudentById) {
-      if (
-        existingStudentById.lastname !== lastname ||
-        existingStudentById.firstname !== firstname ||
-        existingStudentById.course !== course ||
-        existingStudentById.yearsection !== yearSection
-      ) {
-        alert(
-          "Student ID already exists but the provided details do not match the existing record."
-        );
+      if (existingStudentById) {
+        if (
+          existingStudentById.lastname !== lastname ||
+          existingStudentById.firstname !== firstname ||
+          existingStudentById.course !== course ||
+          existingStudentById.yearsection !== yearSection
+        ) {
+          alert(
+            "Student ID already exists but the provided details do not match the existing record."
+          );
+          return;
+        }
+
+        setStudentLocal(existingStudentById);
         return;
       }
 
-      setStudentLocal(existingStudentById);
-      return;
+      const inserted = await saveStudent({
+        id,
+        lastname,
+        firstname,
+        course,
+        yearsection: yearSection
+      });
+      setStudentLocal(inserted);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to save student.");
     }
-
-    const inserted = saveStudent({
-      id,
-      lastname,
-      firstname,
-      course,
-      yearsection: yearSection
-    });
-
-    setStudentLocal(inserted);
   };
 
   const setStudentLocal = (studentRecord) => {

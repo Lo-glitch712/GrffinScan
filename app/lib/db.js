@@ -1,121 +1,15 @@
-const KEY = "itona-local-db";
+import { requireSupabase } from "./supabase";
 
-function seed() {
-  return {
-    students: [],
-    events: [{ id: 1, name: "Orientation", is_open: true }],
-    hosts: [{ id: 1, username: "host", password: "host", current_session: null }],
-    admins: [{ id: 1, username: "admin", password: "admin", current_session: null }],
-    attendance: [],
-  };
-}
-
-function read() {
-  if (typeof window === "undefined") return seed();
-
+if (typeof window !== "undefined") {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) {
-      const initial = seed();
-      localStorage.setItem(KEY, JSON.stringify(initial));
-      return initial;
-    }
-
-    const parsed = JSON.parse(raw);
-    return {
-      students: parsed.students || [],
-      events: parsed.events?.length ? parsed.events : seed().events,
-      hosts: parsed.hosts?.length ? parsed.hosts : seed().hosts,
-      admins: parsed.admins?.length ? parsed.admins : seed().admins,
-      attendance: parsed.attendance || [],
-    };
+    localStorage.removeItem("itona-local-db");
   } catch {
-    return seed();
+    /* ignore */
   }
-}
-
-function write(db) {
-  localStorage.setItem(KEY, JSON.stringify(db));
 }
 
 function sameId(a, b) {
   return String(a) === String(b);
-}
-
-export function getStudents() {
-  return read().students;
-}
-
-export function findStudentById(id) {
-  return read().students.find((student) => sameId(student.id, id)) || null;
-}
-
-export function saveStudent(student) {
-  const db = read();
-  const record = {
-    ...student,
-    created_at: student.created_at || new Date().toISOString(),
-  };
-  db.students.push(record);
-  write(db);
-  return record;
-}
-
-export function updateStudent(id, fields) {
-  const db = read();
-  db.students = db.students.map((student) =>
-    sameId(student.id, id) ? { ...student, ...fields } : student
-  );
-  write(db);
-}
-
-export function deleteStudent(id) {
-  const db = read();
-  db.students = db.students.filter((student) => !sameId(student.id, id));
-  db.attendance = db.attendance.filter((row) => !sameId(row.student_id, id));
-  write(db);
-}
-
-export function deleteStudentsWithoutAttendance() {
-  const db = read();
-  const attendedIds = new Set(db.attendance.map((row) => String(row.student_id)));
-  db.students = db.students.filter((student) => attendedIds.has(String(student.id)));
-  write(db);
-}
-
-export function clearAllAttendance() {
-  const db = read();
-  db.attendance = [];
-  db.students = [];
-  write(db);
-}
-
-export function getEvents() {
-  const db = read();
-  const now = Date.now();
-  let changed = false;
-  const events = db.events.map((event) => {
-    const next = applyEventSchedule(event, now);
-    if (next.is_open !== event.is_open) changed = true;
-    return next;
-  });
-  if (changed) {
-    db.events = events;
-    write(db);
-  }
-  return [...events].sort((a, b) => a.id - b.id);
-}
-
-export function getCurrentEvent() {
-  const events = getEvents();
-  const open = events.filter((event) => event.is_open);
-  if (open.length) return open[0];
-
-  const now = Date.now();
-  const upcoming = events
-    .filter((event) => event.starts_at && new Date(event.starts_at).getTime() > now)
-    .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-  return upcoming[0] || null;
 }
 
 function applyEventSchedule(event, now) {
@@ -128,92 +22,234 @@ function applyEventSchedule(event, now) {
   return { ...event, is_open: afterStart && beforeEnd };
 }
 
-export function addEvent(name, { starts_at = "", ends_at = "" } = {}) {
-  const db = read();
-  const id = db.events.reduce((max, event) => Math.max(max, Number(event.id) || 0), 0) + 1;
-  const event = {
-    id,
-    name,
-    starts_at: starts_at || null,
-    ends_at: ends_at || null,
-    is_open: true,
-  };
-  db.events.push(applyEventSchedule(event, Date.now()));
-  write(db);
+async function throwIf(error) {
+  if (error) throw error;
 }
 
-export function setEventTime(id, { starts_at, ends_at }) {
-  const db = read();
-  db.events = db.events.map((event) => {
-    if (!sameId(event.id, id)) return event;
-    const next = {
-      ...event,
+export async function getStudents() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("students").select("*");
+  await throwIf(error);
+  return data || [];
+}
+
+export async function findStudentById(id) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("students")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  await throwIf(error);
+  return data || null;
+}
+
+export async function saveStudent(student) {
+  const supabase = requireSupabase();
+  const record = {
+    ...student,
+    created_at: student.created_at || new Date().toISOString(),
+  };
+  const { data, error } = await supabase
+    .from("students")
+    .insert([record])
+    .select()
+    .single();
+  await throwIf(error);
+  return data;
+}
+
+export async function updateStudent(id, fields) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from("students").update(fields).eq("id", id);
+  await throwIf(error);
+}
+
+export async function deleteStudent(id) {
+  const supabase = requireSupabase();
+  const { error: attendanceError } = await supabase
+    .from("attendance")
+    .delete()
+    .eq("student_id", id);
+  await throwIf(attendanceError);
+  const { error } = await supabase.from("students").delete().eq("id", id);
+  await throwIf(error);
+}
+
+export async function deleteStudentsWithoutAttendance() {
+  const supabase = requireSupabase();
+  const [{ data: students, error: studentError }, { data: attendance, error: attendanceError }] =
+    await Promise.all([
+      supabase.from("students").select("id"),
+      supabase.from("attendance").select("student_id"),
+    ]);
+  await throwIf(studentError);
+  await throwIf(attendanceError);
+
+  const attendedIds = new Set((attendance || []).map((row) => String(row.student_id)));
+  const unused = (students || []).filter((student) => !attendedIds.has(String(student.id)));
+  if (!unused.length) return;
+
+  const { error } = await supabase
+    .from("students")
+    .delete()
+    .in("id", unused.map((student) => student.id));
+  await throwIf(error);
+}
+
+export async function clearAllAttendance() {
+  const supabase = requireSupabase();
+  const { error: attendanceError } = await supabase
+    .from("attendance")
+    .delete()
+    .not("student_id", "is", null);
+  await throwIf(attendanceError);
+  const { error } = await supabase.from("students").delete().not("id", "is", null);
+  await throwIf(error);
+}
+
+export async function getEvents() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("events").select("*").order("id", { ascending: true });
+  await throwIf(error);
+
+  const now = Date.now();
+  const events = (data || []).map((event) => applyEventSchedule(event, now));
+  await Promise.all(
+    events
+      .filter((event, index) => event.is_open !== data[index].is_open)
+      .map((event) =>
+        supabase.from("events").update({ is_open: event.is_open }).eq("id", event.id)
+      )
+  );
+  return events;
+}
+
+export async function getCurrentEvent() {
+  const events = await getEvents();
+  const open = events.filter((event) => event.is_open);
+  if (open.length) return open[0];
+
+  const now = Date.now();
+  const upcoming = events
+    .filter((event) => event.starts_at && new Date(event.starts_at).getTime() > now)
+    .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  return upcoming[0] || null;
+}
+
+export async function addEvent(name, { starts_at = "", ends_at = "" } = {}) {
+  const supabase = requireSupabase();
+  const scheduled = applyEventSchedule(
+    {
+      name,
       starts_at: starts_at || null,
       ends_at: ends_at || null,
-    };
-    return applyEventSchedule(next, Date.now());
-  });
-  write(db);
-}
-
-export function setEventOpen(id, isOpen) {
-  const db = read();
-  db.events = db.events.map((event) =>
-    sameId(event.id, id) ? { ...event, is_open: isOpen } : event
+      is_open: true,
+    },
+    Date.now()
   );
-  write(db);
+  const { error } = await supabase.from("events").insert([scheduled]);
+  await throwIf(error);
 }
 
-export function deleteEvent(id) {
-  const db = read();
-  db.events = db.events.filter((event) => !sameId(event.id, id));
-  db.attendance = db.attendance.filter((row) => !sameId(row.event_id, id));
-  write(db);
-}
-
-export function getHosts() {
-  return read().hosts;
-}
-
-export function deleteHost(id) {
-  const db = read();
-  db.hosts = db.hosts.filter((host) => !sameId(host.id, id));
-  write(db);
-}
-
-export function findAccount(username, password) {
-  const db = read();
-  const admin = db.admins.find(
-    (row) => row.username === username && row.password === password
+export async function setEventTime(id, { starts_at, ends_at }) {
+  const supabase = requireSupabase();
+  const next = applyEventSchedule(
+    {
+      starts_at: starts_at || null,
+      ends_at: ends_at || null,
+    },
+    Date.now()
   );
+  const { error } = await supabase
+    .from("events")
+    .update({
+      starts_at: next.starts_at,
+      ends_at: next.ends_at,
+      is_open: next.is_open,
+    })
+    .eq("id", id);
+  await throwIf(error);
+}
+
+export async function setEventOpen(id, isOpen) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from("events").update({ is_open: isOpen }).eq("id", id);
+  await throwIf(error);
+}
+
+export async function deleteEvent(id) {
+  const supabase = requireSupabase();
+  const eventId = Number(id);
+  const key = Number.isNaN(eventId) ? id : eventId;
+  const { error: attendanceError } = await supabase.from("attendance").delete().eq("event_id", key);
+  await throwIf(attendanceError);
+  const { error } = await supabase.from("events").delete().eq("id", key);
+  await throwIf(error);
+}
+
+export async function getHosts() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("hosts").select("*");
+  await throwIf(error);
+  return data || [];
+}
+
+export async function deleteHost(id) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from("hosts").delete().eq("id", id);
+  await throwIf(error);
+}
+
+export async function findAccount(username, password) {
+  const supabase = requireSupabase();
+  const { data: admin, error: adminError } = await supabase
+    .from("admins")
+    .select("*")
+    .eq("username", username)
+    .eq("password", password)
+    .maybeSingle();
+  await throwIf(adminError);
   if (admin) return { type: "admin", account: admin };
 
-  const host = db.hosts.find(
-    (row) => row.username === username && row.password === password
-  );
+  const { data: host, error: hostError } = await supabase
+    .from("hosts")
+    .select("*")
+    .eq("username", username)
+    .eq("password", password)
+    .maybeSingle();
+  await throwIf(hostError);
   if (host) return { type: "host", account: host };
 
   return null;
 }
 
-export function setSession(table, id, token) {
-  const db = read();
-  db[table] = db[table].map((row) =>
-    sameId(row.id, id) ? { ...row, current_session: token } : row
-  );
-  write(db);
+export async function setSession(table, id, token) {
+  const supabase = requireSupabase();
+  const { error } = await supabase
+    .from(table)
+    .update({ current_session: token })
+    .eq("id", id);
+  await throwIf(error);
 }
 
-export function getHostSession(id) {
-  return read().hosts.find((host) => sameId(host.id, id)) || null;
+export async function getHostSession(id) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("hosts").select("*").eq("id", id).maybeSingle();
+  await throwIf(error);
+  return data || null;
 }
 
-export function getAttendance() {
-  return read().attendance;
+export async function getAttendance() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from("attendance").select("*");
+  await throwIf(error);
+  return data || [];
 }
 
-export function getStudentRecords({ course, yearSection, search, page = 0, pageSize, limit } = {}) {
-  let students = [...read().students];
+export async function getStudentRecords({ course, yearSection, search, page = 0, pageSize, limit } = {}) {
+  let students = await getStudents();
+  const attendance = await getAttendance();
 
   if (course) students = students.filter((student) => student.course === course);
   if (yearSection) students = students.filter((student) => student.yearsection === yearSection);
@@ -243,7 +279,6 @@ export function getStudentRecords({ course, yearSection, search, page = 0, pageS
   if (limit) students = students.slice(0, limit);
   if (pageSize) students = students.slice(page * pageSize, (page + 1) * pageSize);
 
-  const attendance = read().attendance;
   return students.map((student) => ({
     ...student,
     events: attendance
@@ -255,22 +290,28 @@ export function getStudentRecords({ course, yearSection, search, page = 0, pageS
   }));
 }
 
-export function findAttendance(studentId, eventId) {
-  return (
-    read().attendance.find(
-      (row) => sameId(row.student_id, studentId) && sameId(row.event_id, eventId)
-    ) || null
-  );
+export async function findAttendance(studentId, eventId) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("attendance")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("event_id", eventId)
+    .maybeSingle();
+  await throwIf(error);
+  return data || null;
 }
 
-export function addAttendance(studentId, eventId) {
-  const db = read();
-  db.attendance.push({ student_id: studentId, event_id: eventId });
-  write(db);
+export async function addAttendance(studentId, eventId) {
+  const supabase = requireSupabase();
+  const { error } = await supabase
+    .from("attendance")
+    .insert([{ student_id: studentId, event_id: eventId }]);
+  await throwIf(error);
 }
 
-export function isHostSessionValid(hostInfo) {
+export async function isHostSessionValid(hostInfo) {
   if (!hostInfo?.id) return false;
-  const host = getHostSession(hostInfo.id);
+  const host = await getHostSession(hostInfo.id);
   return Boolean(host && host.current_session === hostInfo.current_session);
 }

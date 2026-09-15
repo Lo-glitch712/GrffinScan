@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
+import { saveStudent } from "../../lib/db";
 
 export const POST = async (req) => {
   try {
     const body = await req.json();
-    const { lastname, firstname, course, yearSection } = body;
+    const { id, lastname, firstname, course, yearSection } = body;
 
     if (!lastname || !firstname || !course || !yearSection) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    return NextResponse.json({
-      message: "Student saved locally in the browser. This API is unused for now.",
+    const data = await saveStudent({
+      id,
+      lastname,
+      firstname,
+      course,
+      yearsection: yearSection,
     });
+
+    return NextResponse.json({ message: "Student saved successfully", data });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

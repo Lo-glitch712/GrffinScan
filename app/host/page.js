@@ -16,11 +16,11 @@ export default function HostLoginPage() {
     setLoading(true);
 
     try {
-      const match = findAccount(username, password);
+      const match = await findAccount(username, password);
 
       if (match?.type === "admin") {
         const sessionToken = crypto.randomUUID();
-        setSession("admins", match.account.id, sessionToken);
+        await setSession("admins", match.account.id, sessionToken);
         sessionStorage.setItem(
           "adminInfo",
           JSON.stringify({
@@ -35,7 +35,7 @@ export default function HostLoginPage() {
 
       if (match?.type === "host") {
         const hostSessionToken = crypto.randomUUID();
-        setSession("hosts", match.account.id, hostSessionToken);
+        await setSession("hosts", match.account.id, hostSessionToken);
         sessionStorage.setItem(
           "hostInfo",
           JSON.stringify({

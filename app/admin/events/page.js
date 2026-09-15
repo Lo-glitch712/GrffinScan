@@ -123,7 +123,7 @@ export default function EventsPage() {
   }, []);
 
   const fetchEvents = async () => {
-    const list = getEvents();
+    const list = await getEvents();
     setEvents(list);
     setTimes(
       Object.fromEntries(
@@ -149,7 +149,7 @@ export default function EventsPage() {
     if (schedule.error) return alert(schedule.error);
 
     setLoading(true);
-    createEvent(newEventName.trim(), {
+    await createEvent(newEventName.trim(), {
       starts_at: schedule.starts_at,
       ends_at: schedule.ends_at,
     });
@@ -162,11 +162,11 @@ export default function EventsPage() {
     setLoading(false);
   };
 
-  const saveTime = (id) => {
+  const saveTime = async (id) => {
     const current = times[id] || {};
     const schedule = buildSchedule(current.date, current.time, current.endTime);
     if (schedule.error) return alert(schedule.error);
-    setEventTime(id, {
+    await setEventTime(id, {
       starts_at: schedule.starts_at,
       ends_at: schedule.ends_at,
     });
@@ -175,19 +175,24 @@ export default function EventsPage() {
   };
 
   const closeEvent = async (id) => {
-    setEventOpen(id, false);
+    await setEventOpen(id, false);
     fetchEvents();
   };
 
   const openEvent = async (id) => {
-    setEventOpen(id, true);
+    await setEventOpen(id, true);
     fetchEvents();
   };
 
   const deleteEvent = async (id) => {
     if (!confirm("Are you sure you want to delete this event? This cannot be undone.")) return;
-    removeEvent(id);
-    fetchEvents();
+    try {
+      await removeEvent(id);
+      await fetchEvents();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to delete event.");
+    }
   };
 
   const updateTime = (id, key, value) => {

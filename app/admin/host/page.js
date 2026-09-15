@@ -29,7 +29,7 @@ export default function AdminHostsPage() {
 
   const fetchHosts = async () => {
     setLoading(true);
-    const data = getHosts();
+    const data = await getHosts();
     const sortedHosts = [...data].sort((a, b) => {
       const aActive = a.current_session ? 1 : 0;
       const bActive = b.current_session ? 1 : 0;
@@ -41,13 +41,13 @@ export default function AdminHostsPage() {
 
   const handleDelete = async (id) => {
     if (!confirm("Are you sure you want to delete this host?")) return;
-    deleteHost(id);
+    await deleteHost(id);
     fetchHosts();
   };
 
   const forceLogout = async (host) => {
     if (!confirm(`Force logout ${host.username}?`)) return;
-    setSession("hosts", host.id, null);
+    await setSession("hosts", host.id, null);
     fetchHosts();
   };
 

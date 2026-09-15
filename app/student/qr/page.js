@@ -35,7 +35,13 @@ export default function QRPage() {
   }, [router]);
 
   useEffect(() => {
-    const loadEvent = () => setEvent(getCurrentEvent());
+    const loadEvent = async () => {
+      try {
+        setEvent(await getCurrentEvent());
+      } catch (err) {
+        console.error(err);
+      }
+    };
     loadEvent();
     const timer = setInterval(loadEvent, 10000);
     return () => clearInterval(timer);

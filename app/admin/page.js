@@ -17,10 +17,10 @@ export default function AdminPage() {
     }
   }, [router]);
 
-  const logout = () => {
+    const logout = async () => {
     try {
       const adminInfo = JSON.parse(sessionStorage.getItem("adminInfo"));
-      if (adminInfo?.id) setSession("admins", adminInfo.id, null);
+      if (adminInfo?.id) await setSession("admins", adminInfo.id, null);
     } catch {
       /* ignore */
     }

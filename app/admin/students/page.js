@@ -28,7 +28,7 @@ export default function AdminStudentsPage() {
   }, [router]);
 
   const fetchStudents = async () => {
-    const data = [...getStudents()].sort((a, b) =>
+    const data = [...(await getStudents())].sort((a, b) =>
       String(b.created_at || "").localeCompare(String(a.created_at || ""))
     );
     setStudents(data);
@@ -54,7 +54,7 @@ export default function AdminStudentsPage() {
   };
 
   const handleUpdate = async () => {
-    updateStudent(formData.id, {
+    await updateStudent(formData.id, {
       firstname: formData.firstname,
       lastname: formData.lastname,
       course: formData.course,

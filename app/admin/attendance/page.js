@@ -39,11 +39,11 @@ export default function AttendancePage() {
   }, []);
 
   const fetchEvents = async () => {
-    setEvents(getEvents());
+    setEvents(await getEvents());
   };
 
   const fetchAllStudents = async () => {
-    setAllStudents(getStudents());
+    setAllStudents(await getStudents());
   };
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export default function AttendancePage() {
   const fetchAttendance = async () => {
     setLoading(true);
     try {
-      setRecords(getStudentRecords({
+      setRecords(await getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,
@@ -68,14 +68,14 @@ export default function AttendancePage() {
 
   const deleteStudent = async (studentId) => {
     if (!confirm("Are you sure you want to delete this student?")) return;
-    removeStudent(studentId);
+    await removeStudent(studentId);
     setArmedId(null);
     fetchAttendance();
     fetchAllStudents();
   };
 
-  const removeAllAttendance = () => {
-    clearAllAttendance();
+  const removeAllAttendance = async () => {
+    await clearAllAttendance();
     setConfirmClear(false);
     setArmedId(null);
     fetchAttendance();
@@ -108,7 +108,7 @@ export default function AttendancePage() {
 
   const fetchAllForDownload = async () => {
     try {
-      return getStudentRecords({
+      return await getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,

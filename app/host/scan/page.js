@@ -49,7 +49,7 @@ export default function ScanPage() {
         return;
       }
 
-      if (!isHostSessionValid(hostInfo)) {
+      if (!(await isHostSessionValid(hostInfo))) {
         sessionStorage.removeItem("hostInfo");
         clearInterval(interval);
         alert("You have been logged out by the admin.");
@@ -64,7 +64,7 @@ export default function ScanPage() {
   }, [router]);
 
   const fetchEvents = async () => {
-    const openEvents = getEvents().filter((evt) => evt.is_open);
+    const openEvents = (await getEvents()).filter((evt) => evt.is_open);
     setEvents(openEvents);
     if (openEvents.length > 0) setSelectedEvent(openEvents[0].id);
   };
@@ -111,7 +111,7 @@ export default function ScanPage() {
     }
 
     try {
-      const student = findStudentById(studentId);
+      const student = await findStudentById(studentId);
 
       if (!student) {
         showPopup("error", "Student not found.");
@@ -119,7 +119,7 @@ export default function ScanPage() {
         return false;
       }
 
-      const existing = findAttendance(studentId, eventId);
+      const existing = await findAttendance(studentId, eventId);
 
       if (existing) {
         setScannedStudent(student);
@@ -128,7 +128,7 @@ export default function ScanPage() {
         return false;
       }
 
-      addAttendance(studentId, eventId);
+      await addAttendance(studentId, eventId);
 
       setScannedStudent(student);
       showPopup("success", "Attendance successfully recorded.");

@@ -33,7 +33,7 @@ export default function HostDashboard() {
         return;
       }
 
-      if (!isHostSessionValid(hostInfo)) {
+      if (!(await isHostSessionValid(hostInfo))) {
         sessionStorage.removeItem("hostInfo");
         clearInterval(interval);
         alert("You have been logged out by the admin.");
@@ -48,7 +48,7 @@ export default function HostDashboard() {
     const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
 
     if (hostInfo?.id) {
-      setSession("hosts", hostInfo.id, null);
+      await setSession("hosts", hostInfo.id, null);
     }
 
     sessionStorage.removeItem("hostInfo");

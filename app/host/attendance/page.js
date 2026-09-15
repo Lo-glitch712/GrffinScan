@@ -43,7 +43,7 @@ export default function AttendancePage() {
         return;
       }
 
-      if (!isHostSessionValid(hostInfo)) {
+      if (!(await isHostSessionValid(hostInfo))) {
         sessionStorage.removeItem("hostInfo");
         clearInterval(interval);
         alert("You have been logged out by the admin.");
@@ -55,11 +55,11 @@ export default function AttendancePage() {
   }, [router]);
 
   const fetchEvents = async () => {
-    setEvents(getEvents());
+    setEvents(await getEvents());
   };
 
   const fetchAllStudents = async () => {
-    setAllStudents(getStudents());
+    setAllStudents(await getStudents());
   };
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export default function AttendancePage() {
   const fetchAttendance = async () => {
     setLoading(true);
     try {
-      const merged = getStudentRecords({
+      const merged = await getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,
@@ -85,7 +85,7 @@ export default function AttendancePage() {
 
   const fetchAllForDownload = async () => {
     try {
-      return getStudentRecords({
+      return await getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,
