@@ -973,6 +973,15 @@ html.qr-screen .secure-qr * {
   margin: 0 0 6px;
 }
 
+.screenshot-veil {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 2147483647;
+  opacity: 0;
+  pointer-events: none;
+}
+
 html.screenshot-blocked {
   background: #000 !important;
 }
@@ -980,6 +989,12 @@ html.screenshot-blocked {
 html.screenshot-blocked body {
   background: #000 !important;
   opacity: 0 !important;
+}
+
+html.screenshot-blocked .screenshot-veil,
+html.screenshot-blocked::after {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 html.screenshot-blocked::after {
