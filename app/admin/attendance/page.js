@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
+  clearAllAttendance,
   deleteStudent as removeStudent,
-  deleteStudentsWithoutAttendance,
   getEvents,
   getStudentRecords,
   getStudents,
@@ -24,7 +25,13 @@ export default function AttendancePage() {
   const [allStudents, setAllStudents] = useState([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState({ course: "", yearSection: "" });
+  const [filter, setFilter] = useState({ course: "", yearSection: "", search: "" });
+  const [armedId, setArmedId] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const pressTimer = useRef(0);
+  const pressedId = useRef(null);
+  const pressStart = useRef({ x: 0, y: 0 });
+  const justArmed = useRef(false);
 
   useEffect(() => {
     fetchEvents();
@@ -49,6 +56,7 @@ export default function AttendancePage() {
       setRecords(getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
+        search: filter.search,
         page,
         pageSize: PAGE_SIZE,
       }));
@@ -61,17 +69,41 @@ export default function AttendancePage() {
   const deleteStudent = async (studentId) => {
     if (!confirm("Are you sure you want to delete this student?")) return;
     removeStudent(studentId);
-    alert("Student deleted successfully!");
+    setArmedId(null);
     fetchAttendance();
     fetchAllStudents();
   };
 
-  const deleteStudentsWithoutValidEvents = async () => {
-    if (!confirm("Delete students with ZERO valid events?")) return;
-    deleteStudentsWithoutAttendance();
-    alert("Cleanup complete!");
+  const removeAllAttendance = () => {
+    clearAllAttendance();
+    setConfirmClear(false);
+    setArmedId(null);
     fetchAttendance();
     fetchAllStudents();
+  };
+
+  const startPress = (studentId, event) => {
+    if (armedId === studentId) return;
+    pressedId.current = studentId;
+    pressStart.current = { x: event.clientX, y: event.clientY };
+    window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(() => {
+      if (pressedId.current === studentId) {
+        justArmed.current = true;
+        setArmedId(studentId);
+      }
+    }, 520);
+  };
+
+  const movePress = (event) => {
+    const dx = event.clientX - pressStart.current.x;
+    const dy = event.clientY - pressStart.current.y;
+    if (Math.hypot(dx, dy) > 10) cancelPress();
+  };
+
+  const cancelPress = () => {
+    pressedId.current = null;
+    window.clearTimeout(pressTimer.current);
   };
 
   const fetchAllForDownload = async () => {
@@ -79,6 +111,7 @@ export default function AttendancePage() {
       return getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
+        search: filter.search,
         limit: DOWNLOAD_LIMIT,
       });
     } catch (err) {
@@ -101,7 +134,6 @@ export default function AttendancePage() {
       "First Name",
       "Course",
       "YearSection",
-      "Total",
       ...events.map((evt) => evt.name),
     ]];
 
@@ -110,7 +142,6 @@ export default function AttendancePage() {
       student.firstname,
       student.course,
       student.yearsection,
-      student.events.length,
       ...events.map((evt) => student.events.includes(evt.id) ? "Attended" : ""),
     ]);
 
@@ -178,9 +209,28 @@ export default function AttendancePage() {
           />
         </div>
 
-        <button className="btn btn-danger" onClick={deleteStudentsWithoutValidEvents}>
-          Delete Zero Attendance
-        </button>
+        <div className="search-row">
+          <input
+            className="field"
+            type="search"
+            placeholder="Search"
+            value={filter.search}
+            onChange={(e) => {
+              setPage(0);
+              setFilter({ ...filter, search: e.target.value });
+            }}
+          />
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Remove all attendance"
+            onClick={() => setConfirmClear(true)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 7h14M10 6V4.8A1.8 1.8 0 0 1 11.8 3h.4A1.8 1.8 0 0 1 14 4.8V6M8 7l.8 13h6.4L16 7" fill="none" stroke="#16140f" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
 
         {loading ? (
           <p className="muted">Loading...</p>
@@ -189,7 +239,23 @@ export default function AttendancePage() {
         ) : (
           <>
             {records.map((student) => (
-              <div key={student.id} className="card">
+              <div
+                key={student.id}
+                className={armedId === student.id ? "card att-card is-armed" : "card att-card"}
+                onPointerDown={(event) => startPress(student.id, event)}
+                onPointerMove={movePress}
+                onPointerUp={cancelPress}
+                onPointerLeave={cancelPress}
+                onPointerCancel={cancelPress}
+                onContextMenu={(event) => event.preventDefault()}
+                onClick={() => {
+                  if (justArmed.current) {
+                    justArmed.current = false;
+                    return;
+                  }
+                  if (armedId) setArmedId(null);
+                }}
+              >
                 <div>
                   <strong>{student.lastname}, {student.firstname}</strong>
                   <p className="muted">{student.course} · {student.yearsection}</p>
@@ -207,10 +273,17 @@ export default function AttendancePage() {
                     );
                   })}
                 </div>
-                <div>Total: {student.events.length}</div>
-                <button className="btn btn-sm btn-danger" onClick={() => deleteStudent(student.id)}>
-                  Delete
-                </button>
+                {armedId === student.id && (
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteStudent(student.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             ))}
 
@@ -222,6 +295,24 @@ export default function AttendancePage() {
           </>
         )}
       </div>
+
+      {confirmClear && createPortal(
+        <div className="overlay" onClick={() => setConfirmClear(false)}>
+          <div className="modal modal-solid confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3>Remove all attendance?</h3>
+            <p className="muted">This will delete every student record. It cannot be undone.</p>
+            <div className="confirm-actions">
+              <button className="btn btn-ghost" onClick={() => setConfirmClear(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={removeAllAttendance}>
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </AppShell>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { isHostSessionValid, setSession } from "../../lib/db";
 import AppShell from "../../components/AppShell";
@@ -8,6 +9,7 @@ import AppShell from "../../components/AppShell";
 export default function HostDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   useEffect(() => {
     const verifyHost = async () => {
@@ -71,10 +73,27 @@ export default function HostDashboard() {
         <button className="btn" onClick={() => router.push("/host/attendance")}>
           Attendance
         </button>
-        <button className="btn btn-ghost" onClick={handleLogout}>
+        <button className="btn btn-ghost" onClick={() => setConfirmLogout(true)}>
           Logout
         </button>
       </div>
+
+      {confirmLogout && createPortal(
+        <div className="overlay" onClick={() => setConfirmLogout(false)}>
+          <div className="modal modal-solid confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3>Are you sure you want to logout?</h3>
+            <div className="confirm-actions">
+              <button className="btn btn-ghost" onClick={() => setConfirmLogout(false)}>
+                Cancel
+              </button>
+              <button className="btn" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </AppShell>
   );
 }

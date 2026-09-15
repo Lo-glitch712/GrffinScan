@@ -162,7 +162,12 @@ export default function ScanPage() {
             value={selectedEvent}
             onChange={(e) => setSelectedEvent(e.target.value)}
             placeholder="Select event"
-            options={events.map((evt) => ({ value: evt.id, label: evt.name }))}
+            options={events.map((evt) => ({
+              value: evt.id,
+              label: evt.starts_at
+                ? `${evt.name} · ${new Date(evt.starts_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+                : evt.name,
+            }))}
           />
         ) : (
           <p className="muted">No open events available.</p>

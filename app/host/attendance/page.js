@@ -23,7 +23,7 @@ export default function AttendancePage() {
   const [allStudents, setAllStudents] = useState([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState({ course: "", yearSection: "" });
+  const [filter, setFilter] = useState({ course: "", yearSection: "", search: "" });
 
   useEffect(() => {
     const hostInfo = sessionStorage.getItem("hostInfo");
@@ -72,6 +72,7 @@ export default function AttendancePage() {
       const merged = getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
+        search: filter.search,
         page,
         pageSize: PAGE_SIZE,
       });
@@ -87,6 +88,7 @@ export default function AttendancePage() {
       return getStudentRecords({
         course: filter.course,
         yearSection: filter.yearSection,
+        search: filter.search,
         limit: DOWNLOAD_LIMIT,
       });
     } catch (err) {
@@ -114,7 +116,6 @@ export default function AttendancePage() {
       "First Name",
       "Course",
       "YearSection",
-      "Total",
       ...events.map((evt) => evt.name),
     ]];
 
@@ -123,7 +124,6 @@ export default function AttendancePage() {
       student.firstname,
       student.course,
       student.yearsection,
-      student.events.length,
       ...events.map((evt) => (student.events.includes(evt.id) ? "Attended" : "")),
     ]);
 
@@ -174,7 +174,7 @@ export default function AttendancePage() {
         <div className="row">
           <Select
             value={filter.course}
-            onChange={(e) => setFilter({ ...filter, course: e.target.value, yearSection: "" })}
+            onChange={(e) => { setPage(0); setFilter({ ...filter, course: e.target.value, yearSection: "" }); }}
             placeholder="Courses"
             options={[
               { value: "", label: "Courses" },
@@ -183,7 +183,7 @@ export default function AttendancePage() {
           />
           <Select
             value={filter.yearSection}
-            onChange={(e) => setFilter({ ...filter, yearSection: e.target.value })}
+            onChange={(e) => { setPage(0); setFilter({ ...filter, yearSection: e.target.value }); }}
             placeholder="Year & Section"
             options={[
               { value: "", label: "Year & Section" },
@@ -191,6 +191,17 @@ export default function AttendancePage() {
             ]}
           />
         </div>
+
+        <input
+          className="field"
+          type="search"
+          placeholder="Search"
+          value={filter.search}
+          onChange={(e) => {
+            setPage(0);
+            setFilter({ ...filter, search: e.target.value });
+          }}
+        />
 
         {loading ? (
           <p className="muted">Loading...</p>
@@ -214,7 +225,6 @@ export default function AttendancePage() {
                     </span>
                   ))}
                 </div>
-                <div>Total: {student.events.length}</div>
               </div>
             ))}
 

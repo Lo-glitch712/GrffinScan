@@ -83,14 +83,76 @@ export function deleteStudentsWithoutAttendance() {
   write(db);
 }
 
-export function getEvents() {
-  return [...read().events].sort((a, b) => a.id - b.id);
+export function clearAllAttendance() {
+  const db = read();
+  db.attendance = [];
+  db.students = [];
+  write(db);
 }
 
-export function addEvent(name) {
+export function getEvents() {
+  const db = read();
+  const now = Date.now();
+  let changed = false;
+  const events = db.events.map((event) => {
+    const next = applyEventSchedule(event, now);
+    if (next.is_open !== event.is_open) changed = true;
+    return next;
+  });
+  if (changed) {
+    db.events = events;
+    write(db);
+  }
+  return [...events].sort((a, b) => a.id - b.id);
+}
+
+export function getCurrentEvent() {
+  const events = getEvents();
+  const open = events.filter((event) => event.is_open);
+  if (open.length) return open[0];
+
+  const now = Date.now();
+  const upcoming = events
+    .filter((event) => event.starts_at && new Date(event.starts_at).getTime() > now)
+    .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  return upcoming[0] || null;
+}
+
+function applyEventSchedule(event, now) {
+  const start = event.starts_at ? new Date(event.starts_at).getTime() : null;
+  const end = event.ends_at ? new Date(event.ends_at).getTime() : null;
+  if (!start && !end) return event;
+
+  const afterStart = !start || now >= start;
+  const beforeEnd = !end || now < end;
+  return { ...event, is_open: afterStart && beforeEnd };
+}
+
+export function addEvent(name, { starts_at = "", ends_at = "" } = {}) {
   const db = read();
   const id = db.events.reduce((max, event) => Math.max(max, Number(event.id) || 0), 0) + 1;
-  db.events.push({ id, name, is_open: true });
+  const event = {
+    id,
+    name,
+    starts_at: starts_at || null,
+    ends_at: ends_at || null,
+    is_open: true,
+  };
+  db.events.push(applyEventSchedule(event, Date.now()));
+  write(db);
+}
+
+export function setEventTime(id, { starts_at, ends_at }) {
+  const db = read();
+  db.events = db.events.map((event) => {
+    if (!sameId(event.id, id)) return event;
+    const next = {
+      ...event,
+      starts_at: starts_at || null,
+      ends_at: ends_at || null,
+    };
+    return applyEventSchedule(next, Date.now());
+  });
   write(db);
 }
 
@@ -150,11 +212,27 @@ export function getAttendance() {
   return read().attendance;
 }
 
-export function getStudentRecords({ course, yearSection, page = 0, pageSize, limit } = {}) {
+export function getStudentRecords({ course, yearSection, search, page = 0, pageSize, limit } = {}) {
   let students = [...read().students];
 
   if (course) students = students.filter((student) => student.course === course);
   if (yearSection) students = students.filter((student) => student.yearsection === yearSection);
+
+  const query = String(search || "").trim().toLowerCase();
+  if (query) {
+    students = students.filter((student) => {
+      const hay = [
+        student.lastname,
+        student.firstname,
+        student.id,
+        student.course,
+        student.yearsection,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(query);
+    });
+  }
 
   students.sort((a, b) => {
     const last = (a.lastname || "").localeCompare(b.lastname || "");
