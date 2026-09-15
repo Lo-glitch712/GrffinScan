@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../../lib/supabase";
+import { isHostSessionValid, setSession } from "../../lib/db";
+import AppShell from "../../components/AppShell";
 
 export default function HostDashboard() {
   const router = useRouter();
@@ -17,15 +18,12 @@ export default function HostDashboard() {
         return;
       }
 
-      setLoading(false); // Initial load is done
+      setLoading(false);
     };
 
     verifyHost();
 
-    // ---------------------------
-    // LIVE SESSION CHECK
-    // ---------------------------
-    const interval = setInterval(async () => {
+    const interval = setInterval(() => {
       const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
       if (!hostInfo?.id) {
         clearInterval(interval);
@@ -33,137 +31,50 @@ export default function HostDashboard() {
         return;
       }
 
-      const { data: hostData, error } = await supabase
-        .from("hosts")
-        .select("current_session")
-        .eq("id", hostInfo.id)
-        .single();
-
-      if (error || hostData?.current_session !== hostInfo.current_session) {
-        // Admin cleared the session → force logout
+      if (!isHostSessionValid(hostInfo)) {
         sessionStorage.removeItem("hostInfo");
         clearInterval(interval);
         alert("You have been logged out by the admin.");
         router.push("/host");
       }
-    }, 5000); // Check every 5 seconds
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [router]);
 
-  // ---------------------------
-  // LOGOUT FUNCTION
-  // ---------------------------
   const handleLogout = async () => {
     const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
 
     if (hostInfo?.id) {
-      await supabase
-        .from("hosts")
-        .update({ current_session: null })
-        .eq("id", hostInfo.id);
+      setSession("hosts", hostInfo.id, null);
     }
 
     sessionStorage.removeItem("hostInfo");
     router.push("/host");
   };
 
-  if (loading)
-    return <p style={{ textAlign: "center", marginTop: "50px" }}>Loading...</p>;
+  if (loading) {
+    return (
+      <AppShell title="Host">
+        <p className="muted">Loading...</p>
+      </AppShell>
+    );
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-      <header style={headerFooterStyle}>
-        <h1>Host Dashboard</h1>
-      </header>
-
-      <img
-        src="/left.png"
-        alt="Left"
-        style={{
-          position: "absolute",
-          top: "10px",
-          left: "13px",
-          width: "55px",
-          height: "55px",
-          objectFit: "cover",
-        }}
-      />
-
-      <img
-        src="/right.png"
-        alt="Right"
-        style={{
-          position: "absolute",
-          top: "10px",
-          right: "13px",
-          width: "50px",
-          height: "50px",
-          objectFit: "cover",
-        }}
-      />
-
-      <main style={mainStyle}>
-        <p>Welcome to the Host Dashboard</p>
-
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "20px",
-            width: "100%",
-            maxWidth: "250px",
-          }}
-        >
-          <button onClick={() => router.push("/host/scan")} style={buttonStyle}>
-            Scan QR Code
-          </button>
-
-          <button onClick={() => router.push("/host/attendance")} style={buttonStyle}>
-            Attendance
-          </button>
-
-          <button onClick={handleLogout} style={buttonStyle}>
-            Logout
-          </button>
-        </div>
-      </main>
-
-      <footer style={headerFooterStyle}>
-        <p>© 2026</p>
-      </footer>
-    </div>
+    <AppShell title="Host">
+      <div className="stack">
+        <p className="lede">Scan students or review attendance.</p>
+        <button className="btn" onClick={() => router.push("/host/scan")}>
+          Scan QR Code
+        </button>
+        <button className="btn" onClick={() => router.push("/host/attendance")}>
+          Attendance
+        </button>
+        <button className="btn btn-ghost" onClick={handleLogout}>
+          Logout
+        </button>
+      </div>
+    </AppShell>
   );
 }
-
-// ------------------------
-// Styles
-// ------------------------
-
-const headerFooterStyle = {
-  backgroundColor: "#FFD700",
-  padding: "20px",
-  textAlign: "center",
-};
-
-const mainStyle = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "center",
-  alignItems: "center",
-  gap: "30px",
-  padding: "20px",
-};
-
-const buttonStyle = {
-  padding: "16px 40px",
-  fontSize: "18px",
-  borderRadius: "8px",
-  border: "none",
-  backgroundColor: "#f4b400",
-  color: "white",
-  cursor: "pointer",
-  width: "100%",
-  textAlign: "center",
-};

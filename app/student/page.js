@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { supabase } from "../lib/supabase";
+import { findStudentById, saveStudent } from "../lib/db";
+import AppShell from "../components/AppShell";
+import Select from "../components/Select";
 
 export default function StudentPage() {
   const router = useRouter();
@@ -25,79 +27,45 @@ export default function StudentPage() {
   const handleLogin = async () => {
     let { id, lastname, firstname, course, yearSection } = formData;
 
-    // 1️⃣ Validate inputs
     if (!id || !lastname || !firstname || !course || !yearSection) {
       alert("Please complete all fields");
       return;
     }
 
-    // Clean inputs
     id = id.trim();
     lastname = lastname.trim();
     firstname = firstname.trim();
 
-    try {
-      // 2️⃣ Check if the student ID already exists
-      const { data: existingStudentById, error: fetchIdError } = await supabase
-        .from("students")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
+    const existingStudentById = findStudentById(id);
 
-      if (fetchIdError) {
-        console.error("Fetch ID Error:", fetchIdError);
-        throw new Error(fetchIdError.message || JSON.stringify(fetchIdError));
-      }
-
-      if (existingStudentById) {
-        // ID exists → check if other fields match
-        if (
-          existingStudentById.lastname !== lastname ||
-          existingStudentById.firstname !== firstname ||
-          existingStudentById.course !== course ||
-          existingStudentById.yearsection !== yearSection
-        ) {
-          alert(
-            "Student ID already exists but the provided details do not match the existing record."
-          );
-          return; // Block login
-        }
-
-        alert("Login successful using existing record.");
-        setStudentLocal(existingStudentById);
+    if (existingStudentById) {
+      if (
+        existingStudentById.lastname !== lastname ||
+        existingStudentById.firstname !== firstname ||
+        existingStudentById.course !== course ||
+        existingStudentById.yearsection !== yearSection
+      ) {
+        alert(
+          "Student ID already exists but the provided details do not match the existing record."
+        );
         return;
       }
 
-      // 3️⃣ Insert new student
-      const { data: inserted, error: insertError } = await supabase
-        .from("students")
-        .insert([
-          {
-            id, // manually provided ID
-            lastname,
-            firstname,
-            course,
-            yearsection: yearSection // exact column name
-          }
-        ])
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error("Insert Error:", insertError);
-        throw new Error(insertError.message || JSON.stringify(insertError));
-      }
-
-      alert("New student record created and logged in.");
-      setStudentLocal(inserted);
-
-    } catch (err) {
-      console.error("Login Error:", err);
-      alert("Failed to login student: " + (err.message || JSON.stringify(err)));
+      setStudentLocal(existingStudentById);
+      return;
     }
+
+    const inserted = saveStudent({
+      id,
+      lastname,
+      firstname,
+      course,
+      yearsection: yearSection
+    });
+
+    setStudentLocal(inserted);
   };
 
-  // Helper to save student info to localStorage
   const setStudentLocal = (studentRecord) => {
     const studentData = {
       id: studentRecord.id,
@@ -112,120 +80,68 @@ export default function StudentPage() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-      
-      <header style={headerFooterStyle}>
-        <h1>Student Login</h1>
-      </header>
-
-      <main style={mainStyle}>
-
+    <AppShell title="Student">
+      <div className="stack">
         <input
+          className="field"
           type="text"
           name="id"
           placeholder="Student ID"
           value={formData.id}
           onChange={handleChange}
-          style={inputStyle}
         />
-
         <input
+          className="field"
           type="text"
           name="lastname"
           placeholder="Last Name"
           value={formData.lastname}
           onChange={handleChange}
-          style={inputStyle}
         />
-
         <input
+          className="field"
           type="text"
           name="firstname"
           placeholder="First Name"
           value={formData.firstname}
           onChange={handleChange}
-          style={inputStyle}
         />
-
-        <select
+        <Select
           name="course"
           value={formData.course}
           onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select Course</option>
-          <option value="BSCE">BSCE</option>
-          <option value="BSSE">BSSE</option>
-          <option value="BSCS">BSCS</option>
-          <option value="BSIT">BSIT</option>
-          <option value="BAT">BAT</option>
-          <option value="RAC">RAC</option>
-          <option value="EET">EET</option>
-          <option value="BET-MET-AUTO">BET-MET-AUTO</option>
-          <option value="BSMATH">BSMATH</option>
-        </select>
-
-        <select
+          placeholder="Select Course"
+          options={[
+            { value: "BSCE", label: "BSCE" },
+            { value: "BSSE", label: "BSSE" },
+            { value: "BSCS", label: "BSCS" },
+            { value: "BSIT", label: "BSIT" },
+            { value: "BAT", label: "BAT" },
+            { value: "RAC", label: "RAC" },
+            { value: "EET", label: "EET" },
+            { value: "BET-MET-AUTO", label: "BET-MET-AUTO" },
+            { value: "BSMATH", label: "BSMATH" },
+          ]}
+        />
+        <Select
           name="yearSection"
           value={formData.yearSection}
           onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select Year & Section</option>
-          {[
+          placeholder="Select Year & Section"
+          options={[
             "1A","1B","1C","1D","1E",
             "2A","2B","2C","2D","2E",
             "3A","3B","3C","3D","3E",
             "4A","4B","4C","4D","4E"
-          ].map((ys) => (
-            <option key={ys} value={ys}>{ys}</option>
-          ))}
-        </select>
-
-        <button onClick={handleLogin} style={buttonStyle}>
+          ].map((ys) => ({ value: ys, label: ys }))}
+        />
+        <button className="btn" onClick={handleLogin}>
           Login
         </button>
-
-      </main>
-
-      <footer style={headerFooterStyle}>
-        <p>© 2026</p>
-      </footer>
-
-    </div>
+        <button className="btn btn-ghost" onClick={() => router.push("/")}>
+          Back
+        </button>
+      </div>
+    </AppShell>
   );
 }
-
-const headerFooterStyle = {
-  backgroundColor: "#FFD700",
-  padding: "20px",
-  textAlign: "center"
-};
-
-const mainStyle = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "center",
-  alignItems: "center",
-  gap: "15px",
-  padding: "20px"
-};
-
-const inputStyle = {
-  padding: "12px",
-  width: "250px",
-  borderRadius: "8px",
-  border: "1px solid #ccc"
-};
-
-const buttonStyle = {
-  padding: "12px 30px",
-  fontSize: "16px",
-  borderRadius: "8px",
-  border: "none",
-  backgroundColor: "#f4b400",
-  color: "white",
-  cursor: "pointer",
-  width: "180px"
-};

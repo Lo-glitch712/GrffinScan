@@ -1,0 +1,27 @@
+---
+description: Keep screenshot blackout protection intact across the app
+alwaysApply: true
+---
+
+# No screenshots
+
+Sensitive screens (especially student QR codes) must never appear in a device screenshot, app switcher snapshot, or print capture. If a user captures the screen on phone or desktop, the capture must be black.
+
+## Required behavior
+
+- Keep `ScreenGuard` mounted in `app/layout.js`. Do not remove it.
+- Black out only when the tab is hidden, on print, or on Print Screen / Mac capture keys. Do not black out on window `blur` or 3-finger taps — those fire during normal use.
+- QR codes stay inside `.secure-qr` with the shield overlay. Never allow long-press save, copy, or drag of the QR.
+- Do not add screenshot, download-QR, or share-image features.
+
+```js
+// ❌ BAD
+<img src={qrPng} alt="QR" />
+<button onClick={downloadQr}>Save QR</button>
+
+// ✅ GOOD
+<div className="secure-qr">
+  <QRCode value={student.id} />
+  <div className="secure-qr-shield" />
+</div>
+```
