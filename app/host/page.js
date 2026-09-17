@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ensureDefaultAccounts, findAccount, setSession } from "../lib/db";
+import { createSessionToken, ensureDefaultAccounts, findAccount, setSession } from "../lib/db";
 import AppShell from "../components/AppShell";
 
 export default function HostLoginPage() {
@@ -23,7 +23,7 @@ export default function HostLoginPage() {
       const match = await findAccount(username, password);
 
       if (match?.type === "admin") {
-        const sessionToken = crypto.randomUUID();
+        const sessionToken = createSessionToken();
         await setSession("admins", match.account.id, sessionToken);
         sessionStorage.setItem(
           "adminInfo",
@@ -38,7 +38,7 @@ export default function HostLoginPage() {
       }
 
       if (match?.type === "host") {
-        const hostSessionToken = crypto.randomUUID();
+        const hostSessionToken = createSessionToken();
         await setSession("hosts", match.account.id, hostSessionToken);
         sessionStorage.setItem(
           "hostInfo",
@@ -55,7 +55,7 @@ export default function HostLoginPage() {
       alert("Invalid username or password");
     } catch (err) {
       console.error(err);
-      alert("Login failed");
+      alert(err?.message || "Login failed");
     }
 
     setLoading(false);
@@ -70,6 +70,10 @@ export default function HostLoginPage() {
           placeholder="Username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          autoComplete="username"
           required
         />
         <input

@@ -50,6 +50,9 @@ export default function StudentPage() {
           onChange={handleChange}
           placeholder="Student ID"
           autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
         />
         <label className="field-label">Password</label>
         <input

@@ -12,6 +12,25 @@ function sameId(a, b) {
   return String(a) === String(b);
 }
 
+export function createSessionToken() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch {
+    /* HTTP / non-secure mobile browsers */
+  }
+
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function applyEventSchedule(event, now) {
   const start = event.starts_at ? new Date(event.starts_at).getTime() : null;
   const end = event.ends_at ? new Date(event.ends_at).getTime() : null;
@@ -343,7 +362,11 @@ export async function findAccount(username, password) {
   const name = String(username || "").trim();
   const pass = String(password || "");
 
-  await ensureDefaultAccounts();
+  try {
+    await ensureDefaultAccounts();
+  } catch (err) {
+    console.error(err);
+  }
 
   const { data: admin, error: adminError } = await supabase
     .from("admins")
