@@ -223,6 +223,30 @@ select {
   margin-bottom: 8px;
 }
 
+.auth-note {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 2px 0 0;
+}
+
+.auth-note button {
+  display: inline;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: #b8922a;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .card {
   position: relative;
   background: var(--glass);
@@ -961,12 +985,77 @@ html.qr-screen .secure-qr * {
   -webkit-touch-callout: none;
 }
 
-.scan-video {
+.scan-stage {
+  position: relative;
   width: 100%;
   max-width: 360px;
+  overflow: hidden;
   border-radius: 20px;
   background: #111;
   border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.scan-video {
+  width: 100%;
+  display: block;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: #111;
+}
+
+.scan-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(8, 6, 2, 0.5) 0%,
+    rgba(8, 6, 2, 0.5) calc(50% - 38px),
+    transparent calc(50% - 38px),
+    transparent calc(50% + 38px),
+    rgba(8, 6, 2, 0.5) calc(50% + 38px),
+    rgba(8, 6, 2, 0.5) 100%
+  );
+}
+
+.scan-window {
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  top: 50%;
+  height: 76px;
+  transform: translateY(-50%);
+  border: 2px solid #e4c56a;
+  border-radius: 12px;
+}
+
+.scan-window::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 2px;
+  background: #e4c56a;
+  animation: scan-line 1.6s ease-in-out infinite;
+}
+
+@keyframes scan-line {
+  0%,
+  100% {
+    transform: translateY(-24px);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translateY(24px);
+    opacity: 1;
+  }
+}
+
+.scan-hint {
+  text-align: center;
+  font-size: 13px;
+  margin-top: -4px;
 }
 
 .info p {

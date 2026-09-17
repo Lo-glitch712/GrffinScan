@@ -1,151 +1,79 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { findStudentById, saveStudent } from "../lib/db";
+import { useRouter } from "next/navigation";
 import AppShell from "../components/AppShell";
-import Select from "../components/Select";
+import { loginStudent } from "../lib/db";
 
 export default function StudentPage() {
   const router = useRouter();
+  const [form, setForm] = useState({ id: "", password: "" });
+  const [loading, setLoading] = useState(false);
 
-  const [formData, setFormData] = useState({
-    id: "",
-    lastname: "",
-    firstname: "",
-    course: "",
-    yearSection: ""
-  });
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleChange = (event) => {
+    setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
   };
 
-  const handleLogin = async () => {
-    let { id, lastname, firstname, course, yearSection } = formData;
-
-    if (!id || !lastname || !firstname || !course || !yearSection) {
-      alert("Please complete all fields");
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    if (!form.id.trim() || !form.password) {
+      alert("Enter your Student ID and password.");
       return;
     }
 
-    id = id.trim();
-    lastname = lastname.trim();
-    firstname = firstname.trim();
-
+    setLoading(true);
     try {
-      const existingStudentById = await findStudentById(id);
-
-      if (existingStudentById) {
-        if (
-          existingStudentById.lastname !== lastname ||
-          existingStudentById.firstname !== firstname ||
-          existingStudentById.course !== course ||
-          existingStudentById.yearsection !== yearSection
-        ) {
-          alert(
-            "Student ID already exists but the provided details do not match the existing record."
-          );
-          return;
-        }
-
-        setStudentLocal(existingStudentById);
+      const student = await loginStudent(form.id, form.password);
+      if (!student) {
+        alert("Invalid Student ID or password.");
         return;
       }
 
-      const inserted = await saveStudent({
-        id,
-        lastname,
-        firstname,
-        course,
-        yearsection: yearSection
-      });
-      setStudentLocal(inserted);
+      localStorage.setItem("studentInfo", JSON.stringify(student));
+      router.push("/student/qr");
     } catch (err) {
       console.error(err);
-      alert(err.message || "Failed to save student.");
+      alert(err.message || "Login failed. Try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const setStudentLocal = (studentRecord) => {
-    const studentData = {
-      id: studentRecord.id,
-      firstname: studentRecord.firstname,
-      lastname: studentRecord.lastname,
-      course: studentRecord.course,
-      yearsection: studentRecord.yearsection
-    };
-
-    localStorage.setItem("studentInfo", JSON.stringify(studentData));
-    router.push("/student/qr");
-  };
-
   return (
-    <AppShell title="Student">
-      <div className="stack">
+    <AppShell title="Student" backTo="/">
+      <form className="card stack" onSubmit={handleLogin}>
+        <label className="field-label">Student ID</label>
         <input
           className="field"
-          type="text"
           name="id"
+          value={form.id}
+          onChange={handleChange}
           placeholder="Student ID"
-          value={formData.id}
-          onChange={handleChange}
+          autoComplete="username"
         />
+        <label className="field-label">Password</label>
         <input
           className="field"
-          type="text"
-          name="lastname"
-          placeholder="Last Name"
-          value={formData.lastname}
+          name="password"
+          type="password"
+          value={form.password}
           onChange={handleChange}
+          placeholder="Password"
+          autoComplete="current-password"
         />
-        <input
-          className="field"
-          type="text"
-          name="firstname"
-          placeholder="First Name"
-          value={formData.firstname}
-          onChange={handleChange}
-        />
-        <Select
-          name="course"
-          value={formData.course}
-          onChange={handleChange}
-          placeholder="Select Course"
-          options={[
-            { value: "BSCE", label: "BSCE" },
-            { value: "BSSE", label: "BSSE" },
-            { value: "BSCS", label: "BSCS" },
-            { value: "BSIT", label: "BSIT" },
-            { value: "BAT", label: "BAT" },
-            { value: "RAC", label: "RAC" },
-            { value: "EET", label: "EET" },
-            { value: "BET-MET-AUTO", label: "BET-MET-AUTO" },
-            { value: "BSMATH", label: "BSMATH" },
-          ]}
-        />
-        <Select
-          name="yearSection"
-          value={formData.yearSection}
-          onChange={handleChange}
-          placeholder="Select Year & Section"
-          options={[
-            "1A","1B","1C","1D","1E",
-            "2A","2B","2C","2D","2E",
-            "3A","3B","3C","3D","3E",
-            "4A","4B","4C","4D","4E"
-          ].map((ys) => ({ value: ys, label: ys }))}
-        />
-        <button className="btn" onClick={handleLogin}>
-          Login
+        <button className="btn" type="submit" disabled={loading}>
+          {loading ? "Logging in..." : "Login"}
         </button>
-        <button className="btn btn-ghost" onClick={() => router.push("/")}>
+        <p className="auth-note">
+          Not registered in GriffinScan yet?{" "}
+          <button type="button" onClick={() => router.push("/student/register")}>
+            Create account
+          </button>
+        </p>
+        <button className="btn btn-ghost" type="button" onClick={() => router.push("/")}>
           Back
         </button>
-      </div>
+      </form>
     </AppShell>
   );
 }

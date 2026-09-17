@@ -36,19 +36,21 @@ export default function AttendancePage() {
     fetchAllStudents();
 
     const interval = setInterval(() => {
-      const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
-      if (!hostInfo?.id) {
-        clearInterval(interval);
-        router.push("/host");
-        return;
-      }
+      void (async () => {
+        const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
+        if (!hostInfo?.id) {
+          clearInterval(interval);
+          router.push("/host");
+          return;
+        }
 
-      if (!(await isHostSessionValid(hostInfo))) {
-        sessionStorage.removeItem("hostInfo");
-        clearInterval(interval);
-        alert("You have been logged out by the admin.");
-        router.push("/host");
-      }
+        if (!(await isHostSessionValid(hostInfo))) {
+          sessionStorage.removeItem("hostInfo");
+          clearInterval(interval);
+          alert("You have been logged out by the admin.");
+          router.push("/host");
+        }
+      })();
     }, 5000);
 
     return () => clearInterval(interval);

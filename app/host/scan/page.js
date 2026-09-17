@@ -2,16 +2,37 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BrowserMultiFormatReader } from "@zxing/library";
+import {
+  BarcodeFormat,
+  BrowserMultiFormatReader,
+  DecodeHintType,
+} from "@zxing/library";
 import {
   addAttendance,
   findAttendance,
-  findStudentById,
+  findStudentByBarcode,
   getEvents,
   isHostSessionValid,
 } from "../../lib/db";
 import AppShell from "../../components/AppShell";
 import Select from "../../components/Select";
+
+function createBarcodeReader() {
+  const hints = new Map();
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.CODE_39,
+    BarcodeFormat.CODE_93,
+    BarcodeFormat.ITF,
+    BarcodeFormat.CODABAR,
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A,
+    BarcodeFormat.UPC_E,
+  ]);
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  return new BrowserMultiFormatReader(hints, 300);
+}
 
 export default function ScanPage() {
   const router = useRouter();
@@ -38,26 +59,31 @@ export default function ScanPage() {
     }
 
     fetchEvents();
-    codeReaderRef.current = new BrowserMultiFormatReader();
-    startScanner();
+    codeReaderRef.current = createBarcodeReader();
+    const startTimer = setTimeout(() => {
+      startScanner();
+    }, 0);
 
     const interval = setInterval(() => {
-      const hostInfo = JSON.parse(sessionStorage.getItem("hostInfo"));
-      if (!hostInfo?.id) {
-        clearInterval(interval);
-        router.push("/host");
-        return;
-      }
+      void (async () => {
+        const session = JSON.parse(sessionStorage.getItem("hostInfo"));
+        if (!session?.id) {
+          clearInterval(interval);
+          router.push("/host");
+          return;
+        }
 
-      if (!(await isHostSessionValid(hostInfo))) {
-        sessionStorage.removeItem("hostInfo");
-        clearInterval(interval);
-        alert("You have been logged out by the admin.");
-        router.push("/host");
-      }
+        if (!(await isHostSessionValid(session))) {
+          sessionStorage.removeItem("hostInfo");
+          clearInterval(interval);
+          alert("You have been logged out by the admin.");
+          router.push("/host");
+        }
+      })();
     }, 5000);
 
     return () => {
+      clearTimeout(startTimer);
       if (codeReaderRef.current) codeReaderRef.current.reset();
       clearInterval(interval);
     };
@@ -70,19 +96,31 @@ export default function ScanPage() {
   };
 
   const startScanner = async () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || !codeReaderRef.current) return;
 
-    await codeReaderRef.current.decodeFromVideoDevice(
-      null,
-      videoRef.current,
-      async (result, err) => {
-        if (err && err.name !== "NotFoundException") console.error(err);
-        if (result && !scanLockRef.current) {
-          scanLockRef.current = true;
-          await handleScan(result.getText());
+    try {
+      await codeReaderRef.current.decodeFromConstraints(
+        {
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        },
+        videoRef.current,
+        async (result, err) => {
+          if (err && err.name !== "NotFoundException") console.error(err);
+          if (result && !scanLockRef.current) {
+            scanLockRef.current = true;
+            await handleScan(result.getText());
+          }
         }
-      }
-    );
+      );
+    } catch (err) {
+      console.error(err);
+      showPopup("error", "Camera could not start. Allow camera access and try again.");
+    }
   };
 
   const handleScan = async (scannedText) => {
@@ -93,33 +131,16 @@ export default function ScanPage() {
       return false;
     }
 
-    let studentId = scannedText?.trim();
-
-    if (studentId.startsWith("{") && studentId.endsWith("}")) {
-      try {
-        const data = JSON.parse(studentId);
-        studentId = data.id?.trim();
-      } catch {
-        // Invalid JSON, continue with the plain text
-      }
-    }
-
-    if (!studentId) {
-      showPopup("error", "Invalid QR Code format.");
-      scanLockRef.current = false;
-      return false;
-    }
-
     try {
-      const student = await findStudentById(studentId);
+      const student = await findStudentByBarcode(scannedText);
 
       if (!student) {
-        showPopup("error", "Student not found.");
+        showPopup("error", "Student ID not found in GriffinScan.");
         scanLockRef.current = false;
         return false;
       }
 
-      const existing = await findAttendance(studentId, eventId);
+      const existing = await findAttendance(student.id, eventId);
 
       if (existing) {
         setScannedStudent(student);
@@ -128,7 +149,7 @@ export default function ScanPage() {
         return false;
       }
 
-      await addAttendance(studentId, eventId);
+      await addAttendance(student.id, eventId);
 
       setScannedStudent(student);
       showPopup("success", "Attendance successfully recorded.");
@@ -155,7 +176,7 @@ export default function ScanPage() {
   };
 
   return (
-    <AppShell title="Scan">
+    <AppShell title="Scan Barcode">
       <div className="stack">
         {events.length > 0 ? (
           <Select
@@ -173,7 +194,19 @@ export default function ScanPage() {
           <p className="muted">No open events available.</p>
         )}
 
-        <video ref={videoRef} className="scan-video" />
+        <div className="scan-stage">
+          <video
+            ref={videoRef}
+            className="scan-video"
+            muted
+            playsInline
+            autoPlay
+          />
+          <div className="scan-overlay" aria-hidden="true">
+            <div className="scan-window" />
+          </div>
+        </div>
+        <p className="muted scan-hint">Align the barcode on the student ID</p>
 
         <button className="btn btn-ghost" onClick={() => router.push("/host/dashboard")}>
           Back
@@ -187,6 +220,7 @@ export default function ScanPage() {
             {scannedStudent && (
               <div className="info">
                 <p><strong>{scannedStudent.lastname}, {scannedStudent.firstname}</strong></p>
+                <p className="muted">{scannedStudent.id}</p>
                 <p className="muted">{scannedStudent.course} · {scannedStudent.yearsection}</p>
               </div>
             )}

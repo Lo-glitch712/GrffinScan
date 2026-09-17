@@ -26,11 +26,32 @@ async function throwIf(error) {
   if (error) throw error;
 }
 
+function withoutPassword(student) {
+  if (!student) return null;
+  const { password, ...safe } = student;
+  return safe;
+}
+
+function throwStudentAuthError(error) {
+  if (!error) return;
+  const message = error.message || "";
+  if (
+    error.code === "42703" ||
+    error.code === "PGRST204" ||
+    /password/i.test(message)
+  ) {
+    throw new Error(
+      "Student passwords need a database update. In Supabase → SQL Editor, run: alter table public.students add column if not exists password text not null default '';"
+    );
+  }
+  throw error;
+}
+
 export async function getStudents() {
   const supabase = requireSupabase();
   const { data, error } = await supabase.from("students").select("*");
   await throwIf(error);
-  return data || [];
+  return (data || []).map((student) => withoutPassword(student));
 }
 
 export async function findStudentById(id) {
@@ -41,7 +62,96 @@ export async function findStudentById(id) {
     .eq("id", id)
     .maybeSingle();
   await throwIf(error);
-  return data || null;
+  return withoutPassword(data);
+}
+
+function barcodeIdCandidates(raw) {
+  const text = String(raw || "").trim();
+  const ids = [];
+  const add = (value) => {
+    const next = String(value || "").trim();
+    if (next && !ids.includes(next)) ids.push(next);
+  };
+
+  if (text.startsWith("{") && text.endsWith("}")) {
+    try {
+      add(JSON.parse(text).id);
+    } catch {
+      /* ignore invalid json */
+    }
+  }
+
+  add(text);
+  add(text.replace(/\s+/g, ""));
+  const digits = text.replace(/\D/g, "");
+  add(digits);
+  const longDigits = text.match(/\d{7,}/);
+  if (longDigits) add(longDigits[0]);
+  return ids;
+}
+
+export async function findStudentByBarcode(raw) {
+  for (const id of barcodeIdCandidates(raw)) {
+    const student = await findStudentById(id);
+    if (student) return student;
+  }
+  return null;
+}
+
+export async function loginStudent(id, password) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("students")
+    .select("id, lastname, firstname, course, yearsection, password")
+    .eq("id", String(id).trim())
+    .maybeSingle();
+  throwStudentAuthError(error);
+  if (!data || !data.password || data.password !== password) return null;
+  return withoutPassword(data);
+}
+
+export async function registerStudent(student) {
+  const supabase = requireSupabase();
+  const id = String(student.id).trim();
+  const { data: existing, error: findError } = await supabase
+    .from("students")
+    .select("id, lastname, firstname, course, yearsection, password, created_at")
+    .eq("id", id)
+    .maybeSingle();
+  throwStudentAuthError(findError);
+
+  if (existing?.password) return null;
+
+  const record = {
+    id,
+    lastname: student.lastname,
+    firstname: student.firstname,
+    course: student.course,
+    yearsection: student.yearsection,
+    password: student.password,
+    created_at: existing?.created_at || student.created_at || new Date().toISOString(),
+  };
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from("students")
+      .update({
+        lastname: record.lastname,
+        firstname: record.firstname,
+        course: record.course,
+        yearsection: record.yearsection,
+        password: record.password,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    throwStudentAuthError(error);
+    return withoutPassword(data);
+  }
+
+  const { data, error } = await supabase.from("students").insert([record]).select().single();
+  throwStudentAuthError(error);
+  return withoutPassword(data);
 }
 
 export async function saveStudent(student) {
@@ -56,7 +166,7 @@ export async function saveStudent(student) {
     .select()
     .single();
   await throwIf(error);
-  return data;
+  return withoutPassword(data);
 }
 
 export async function updateStudent(id, fields) {

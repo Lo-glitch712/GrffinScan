@@ -6,8 +6,11 @@ create table if not exists public.students (
   firstname text not null,
   course text not null,
   yearsection text not null,
+  password text not null default '',
   created_at timestamptz default now()
 );
+
+alter table public.students add column if not exists password text not null default '';
 
 create table if not exists public.events (
   id bigint generated always as identity primary key,
