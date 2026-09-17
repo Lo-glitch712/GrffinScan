@@ -4,37 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
-  BarcodeFormat,
-  BrowserMultiFormatReader,
-  DecodeHintType,
-} from "@zxing/library";
-import {
   addAttendance,
   findAttendance,
   findStudentByBarcode,
   getEvents,
   isHostSessionValid,
 } from "../../lib/db";
+import { createBarcodeLoopReader, detectBarcodeFromVideo } from "../../lib/readBarcode";
 import AppShell from "../../components/AppShell";
 import Select from "../../components/Select";
-
-function createBarcodeReader() {
-  const hints = new Map();
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-    BarcodeFormat.CODE_128,
-    BarcodeFormat.CODE_39,
-    BarcodeFormat.CODE_93,
-    BarcodeFormat.ITF,
-    BarcodeFormat.CODABAR,
-    BarcodeFormat.EAN_13,
-    BarcodeFormat.EAN_8,
-    BarcodeFormat.UPC_A,
-    BarcodeFormat.UPC_E,
-    BarcodeFormat.QR_CODE,
-  ]);
-  hints.set(DecodeHintType.TRY_HARDER, true);
-  return new BrowserMultiFormatReader(hints, 250);
-}
 
 function studentLabel(student) {
   if (!student) return "";
@@ -49,10 +27,12 @@ export default function ScanPage() {
   const [popupMessage, setPopupMessage] = useState("");
   const [scannedStudent, setScannedStudent] = useState(null);
   const [ready, setReady] = useState(false);
+  const [manualId, setManualId] = useState("");
+  const [marking, setMarking] = useState(false);
 
   const selectedEventRef = useRef(selectedEvent);
   const videoRef = useRef(null);
-  const codeReaderRef = useRef(null);
+  const canvasRef = useRef(null);
   const scanLockRef = useRef(false);
   const handleScanRef = useRef(null);
 
@@ -64,9 +44,9 @@ export default function ScanPage() {
     setPopupType(type);
     setPopupMessage(message);
     setScannedStudent(student);
-    if (type === "success") {
+    if (type === "success" || type === "already") {
       try {
-        navigator.vibrate?.(180);
+        navigator.vibrate?.(type === "success" ? 180 : 80);
       } catch {
         /* ignore */
       }
@@ -84,7 +64,10 @@ export default function ScanPage() {
       const student = await findStudentByBarcode(scannedText);
 
       if (!student) {
-        showResult("error", `Student ID not found. Scanned: ${String(scannedText || "").trim() || "empty"}`);
+        showResult(
+          "error",
+          `Student ID not found. Scanned: ${String(scannedText || "").trim() || "empty"}`
+        );
         return;
       }
 
@@ -97,6 +80,7 @@ export default function ScanPage() {
 
       await addAttendance(student.id, eventId);
       showResult("success", "Attendance recorded.", student);
+      setManualId("");
     } catch (err) {
       console.error(err);
       showResult("error", err?.message || "Failed to mark attendance.");
@@ -113,61 +97,66 @@ export default function ScanPage() {
     }
 
     let cancelled = false;
-    const reader = createBarcodeReader();
-    codeReaderRef.current = reader;
+    let timer = 0;
+    let stream;
+    const reader = createBarcodeLoopReader();
 
-    const onDecode = async (result, err) => {
-      if (err && err.name !== "NotFoundException") console.error(err);
-      if (!result || scanLockRef.current) return;
+    const tick = async () => {
+      if (cancelled || scanLockRef.current) return;
+      const text = await detectBarcodeFromVideo(
+        videoRef.current,
+        canvasRef.current,
+        reader
+      );
+      if (!text || cancelled || scanLockRef.current) return;
       scanLockRef.current = true;
-      await handleScanRef.current?.(result.getText());
+      await handleScanRef.current?.(text);
     };
 
-    const startScanner = async () => {
-      if (cancelled || !videoRef.current) return;
+    const startCamera = async () => {
+      if (!videoRef.current) return;
       try {
-        await reader.decodeFromConstraints(
-          {
-            audio: false,
-            video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
-          videoRef.current,
-          onDecode
-        );
-        if (!cancelled) setReady(true);
+        });
+        const video = videoRef.current;
+        video.srcObject = stream;
+        video.setAttribute("playsinline", "true");
+        video.muted = true;
+        await video.play();
+        if (!cancelled) {
+          setReady(true);
+          timer = window.setInterval(() => {
+            void tick();
+          }, 180);
+        }
       } catch (err) {
         console.error(err);
-        try {
-          await reader.decodeFromVideoDevice(null, videoRef.current, onDecode);
-          if (!cancelled) setReady(true);
-        } catch (fallbackErr) {
-          console.error(fallbackErr);
-          if (!cancelled) {
-            showResult("error", "Camera could not start. Allow camera access and try again.");
-          }
+        if (!cancelled) {
+          showResult("error", "Camera could not start. Allow camera access and try again.");
         }
       }
     };
 
     fetchEvents();
-    const startTimer = window.setTimeout(startScanner, 150);
+    const startTimer = window.setTimeout(startCamera, 80);
 
-    const interval = setInterval(() => {
+    const sessionTimer = setInterval(() => {
       void (async () => {
         const session = JSON.parse(sessionStorage.getItem("hostInfo"));
         if (!session?.id) {
-          clearInterval(interval);
+          clearInterval(sessionTimer);
           router.push("/host");
           return;
         }
-
         if (!(await isHostSessionValid(session))) {
           sessionStorage.removeItem("hostInfo");
-          clearInterval(interval);
+          clearInterval(sessionTimer);
           alert("You have been logged out by the admin.");
           router.push("/host");
         }
@@ -177,8 +166,9 @@ export default function ScanPage() {
     return () => {
       cancelled = true;
       clearTimeout(startTimer);
-      reader.reset();
-      clearInterval(interval);
+      clearInterval(timer);
+      clearInterval(sessionTimer);
+      stream?.getTracks?.().forEach((track) => track.stop());
     };
   }, [router]);
 
@@ -192,6 +182,22 @@ export default function ScanPage() {
     setPopupType(null);
     setPopupMessage("");
     scanLockRef.current = false;
+  };
+
+  const submitManualId = async (event) => {
+    event.preventDefault();
+    const id = manualId.trim();
+    if (!id) {
+      showResult("error", "Enter a Student ID.");
+      return;
+    }
+    setMarking(true);
+    scanLockRef.current = true;
+    try {
+      await handleScan(id);
+    } finally {
+      setMarking(false);
+    }
   };
 
   const resultClass =
@@ -233,21 +239,43 @@ export default function ScanPage() {
           <div className="scan-overlay" aria-hidden="true">
             <div className="scan-window" />
           </div>
+          <canvas ref={canvasRef} className="scan-canvas" />
         </div>
         <p className="muted scan-hint">
-          {ready ? "Align the barcode on the student ID" : "Starting camera..."}
+          {ready ? "Fill the gold box with the barcode on the ID" : "Starting camera..."}
         </p>
 
         <div className={`scan-result ${resultClass}`}>
           {popupType ? (
             <>
               {popupMessage}
-              {scannedStudent ? <strong>{studentLabel(scannedStudent)} · {scannedStudent.id}</strong> : null}
+              {scannedStudent ? (
+                <strong>
+                  {studentLabel(scannedStudent)} · {scannedStudent.id}
+                </strong>
+              ) : null}
             </>
           ) : (
             "Scan a student ID to record attendance"
           )}
         </div>
+
+        <form className="scan-manual" onSubmit={submitManualId}>
+          <input
+            className="field"
+            name="manualId"
+            value={manualId}
+            onChange={(event) => setManualId(event.target.value)}
+            placeholder="Or type Student ID"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            inputMode="numeric"
+          />
+          <button className="btn" type="submit" disabled={marking}>
+            {marking ? "Saving..." : "Mark attendance"}
+          </button>
+        </form>
 
         <button className="btn btn-ghost" onClick={() => router.push("/host/dashboard")}>
           Back
