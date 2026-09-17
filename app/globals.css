@@ -841,7 +841,7 @@ select {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 80;
+  z-index: 400;
 }
 
 .modal {
@@ -1056,6 +1056,43 @@ html.qr-screen .secure-qr * {
   text-align: center;
   font-size: 13px;
   margin-top: -4px;
+}
+
+.scan-result {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 16px;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.scan-result strong {
+  display: block;
+  margin-top: 2px;
+}
+
+.scan-result.is-idle {
+  background: rgba(255, 255, 255, 0.34);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.scan-result.is-success {
+  background: #d8f0d4;
+  color: #1a3d16;
+  font-weight: 700;
+}
+
+.scan-result.is-already {
+  background: #fff3d0;
+  color: #5c4a10;
+  font-weight: 700;
+}
+
+.scan-result.is-error {
+  background: #f8d4d4;
+  color: #5c1818;
+  font-weight: 700;
 }
 
 .info p {

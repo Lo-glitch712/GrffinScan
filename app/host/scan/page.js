@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
   BarcodeFormat,
@@ -29,9 +30,15 @@ function createBarcodeReader() {
     BarcodeFormat.EAN_8,
     BarcodeFormat.UPC_A,
     BarcodeFormat.UPC_E,
+    BarcodeFormat.QR_CODE,
   ]);
   hints.set(DecodeHintType.TRY_HARDER, true);
-  return new BrowserMultiFormatReader(hints, 300);
+  return new BrowserMultiFormatReader(hints, 250);
+}
+
+function studentLabel(student) {
+  if (!student) return "";
+  return `${student.lastname}, ${student.firstname}`;
 }
 
 export default function ScanPage() {
@@ -41,15 +48,62 @@ export default function ScanPage() {
   const [popupType, setPopupType] = useState(null);
   const [popupMessage, setPopupMessage] = useState("");
   const [scannedStudent, setScannedStudent] = useState(null);
+  const [ready, setReady] = useState(false);
 
   const selectedEventRef = useRef(selectedEvent);
   const videoRef = useRef(null);
   const codeReaderRef = useRef(null);
   const scanLockRef = useRef(false);
+  const handleScanRef = useRef(null);
 
   useEffect(() => {
     selectedEventRef.current = selectedEvent;
   }, [selectedEvent]);
+
+  const showResult = (type, message, student = null) => {
+    setPopupType(type);
+    setPopupMessage(message);
+    setScannedStudent(student);
+    if (type === "success") {
+      try {
+        navigator.vibrate?.(180);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const handleScan = async (scannedText) => {
+    const eventId = selectedEventRef.current;
+    if (!eventId) {
+      showResult("error", "Please select an open event first.");
+      return;
+    }
+
+    try {
+      const student = await findStudentByBarcode(scannedText);
+
+      if (!student) {
+        showResult("error", `Student ID not found. Scanned: ${String(scannedText || "").trim() || "empty"}`);
+        return;
+      }
+
+      const existing = await findAttendance(student.id, eventId);
+
+      if (existing) {
+        showResult("already", "Already in attendance for this event.", student);
+        return;
+      }
+
+      await addAttendance(student.id, eventId);
+      showResult("success", "Attendance recorded.", student);
+    } catch (err) {
+      console.error(err);
+      showResult("error", err?.message || "Failed to mark attendance.");
+    }
+  };
+
+  handleScanRef.current = handleScan;
 
   useEffect(() => {
     const hostInfo = sessionStorage.getItem("hostInfo");
@@ -58,11 +112,49 @@ export default function ScanPage() {
       return;
     }
 
+    let cancelled = false;
+    const reader = createBarcodeReader();
+    codeReaderRef.current = reader;
+
+    const onDecode = async (result, err) => {
+      if (err && err.name !== "NotFoundException") console.error(err);
+      if (!result || scanLockRef.current) return;
+      scanLockRef.current = true;
+      await handleScanRef.current?.(result.getText());
+    };
+
+    const startScanner = async () => {
+      if (cancelled || !videoRef.current) return;
+      try {
+        await reader.decodeFromConstraints(
+          {
+            audio: false,
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          videoRef.current,
+          onDecode
+        );
+        if (!cancelled) setReady(true);
+      } catch (err) {
+        console.error(err);
+        try {
+          await reader.decodeFromVideoDevice(null, videoRef.current, onDecode);
+          if (!cancelled) setReady(true);
+        } catch (fallbackErr) {
+          console.error(fallbackErr);
+          if (!cancelled) {
+            showResult("error", "Camera could not start. Allow camera access and try again.");
+          }
+        }
+      }
+    };
+
     fetchEvents();
-    codeReaderRef.current = createBarcodeReader();
-    const startTimer = setTimeout(() => {
-      startScanner();
-    }, 0);
+    const startTimer = window.setTimeout(startScanner, 150);
 
     const interval = setInterval(() => {
       void (async () => {
@@ -83,8 +175,9 @@ export default function ScanPage() {
     }, 5000);
 
     return () => {
+      cancelled = true;
       clearTimeout(startTimer);
-      if (codeReaderRef.current) codeReaderRef.current.reset();
+      reader.reset();
       clearInterval(interval);
     };
   }, [router]);
@@ -92,88 +185,23 @@ export default function ScanPage() {
   const fetchEvents = async () => {
     const openEvents = (await getEvents()).filter((evt) => evt.is_open);
     setEvents(openEvents);
-    if (openEvents.length > 0) setSelectedEvent(openEvents[0].id);
-  };
-
-  const startScanner = async () => {
-    if (!videoRef.current || !codeReaderRef.current) return;
-
-    try {
-      await codeReaderRef.current.decodeFromConstraints(
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        },
-        videoRef.current,
-        async (result, err) => {
-          if (err && err.name !== "NotFoundException") console.error(err);
-          if (result && !scanLockRef.current) {
-            scanLockRef.current = true;
-            await handleScan(result.getText());
-          }
-        }
-      );
-    } catch (err) {
-      console.error(err);
-      showPopup("error", "Camera could not start. Allow camera access and try again.");
-    }
-  };
-
-  const handleScan = async (scannedText) => {
-    const eventId = selectedEventRef.current;
-    if (!eventId) {
-      showPopup("error", "Please select an open event first.");
-      scanLockRef.current = false;
-      return false;
-    }
-
-    try {
-      const student = await findStudentByBarcode(scannedText);
-
-      if (!student) {
-        showPopup("error", "Student ID not found in GriffinScan.");
-        scanLockRef.current = false;
-        return false;
-      }
-
-      const existing = await findAttendance(student.id, eventId);
-
-      if (existing) {
-        setScannedStudent(student);
-        showPopup("already", "Student already attended this event.");
-        scanLockRef.current = false;
-        return false;
-      }
-
-      await addAttendance(student.id, eventId);
-
-      setScannedStudent(student);
-      showPopup("success", "Attendance successfully recorded.");
-      scanLockRef.current = false;
-      return true;
-    } catch (err) {
-      console.error(err);
-      showPopup("error", "Failed to mark attendance.");
-      scanLockRef.current = false;
-      return false;
-    }
-  };
-
-  const showPopup = (type, message) => {
-    setPopupType(type);
-    setPopupMessage(message);
+    if (openEvents.length > 0) setSelectedEvent(String(openEvents[0].id));
   };
 
   const closePopup = () => {
     setPopupType(null);
     setPopupMessage("");
-    setScannedStudent(null);
     scanLockRef.current = false;
   };
+
+  const resultClass =
+    popupType === "success"
+      ? "is-success"
+      : popupType === "already"
+        ? "is-already"
+        : popupType === "error"
+          ? "is-error"
+          : "is-idle";
 
   return (
     <AppShell title="Scan Barcode">
@@ -184,7 +212,7 @@ export default function ScanPage() {
             onChange={(e) => setSelectedEvent(e.target.value)}
             placeholder="Select event"
             options={events.map((evt) => ({
-              value: evt.id,
+              value: String(evt.id),
               label: evt.starts_at
                 ? `${evt.name} · ${new Date(evt.starts_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                 : evt.name,
@@ -206,27 +234,43 @@ export default function ScanPage() {
             <div className="scan-window" />
           </div>
         </div>
-        <p className="muted scan-hint">Align the barcode on the student ID</p>
+        <p className="muted scan-hint">
+          {ready ? "Align the barcode on the student ID" : "Starting camera..."}
+        </p>
+
+        <div className={`scan-result ${resultClass}`}>
+          {popupType ? (
+            <>
+              {popupMessage}
+              {scannedStudent ? <strong>{studentLabel(scannedStudent)} · {scannedStudent.id}</strong> : null}
+            </>
+          ) : (
+            "Scan a student ID to record attendance"
+          )}
+        </div>
 
         <button className="btn btn-ghost" onClick={() => router.push("/host/dashboard")}>
           Back
         </button>
       </div>
 
-      {popupType && (
+      {popupType && typeof document !== "undefined" && createPortal(
         <div className="overlay" onClick={closePopup}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>{popupMessage}</h2>
+          <div className="modal modal-solid confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3>{popupMessage}</h3>
             {scannedStudent && (
               <div className="info">
-                <p><strong>{scannedStudent.lastname}, {scannedStudent.firstname}</strong></p>
+                <p><strong>{studentLabel(scannedStudent)}</strong></p>
                 <p className="muted">{scannedStudent.id}</p>
                 <p className="muted">{scannedStudent.course} · {scannedStudent.yearsection}</p>
               </div>
             )}
-            <p className="muted">Tap anywhere to close</p>
+            <button className="btn" onClick={closePopup}>
+              OK
+            </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </AppShell>
   );

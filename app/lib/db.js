@@ -191,11 +191,20 @@ function barcodeIdCandidates(raw) {
 }
 
 export async function findStudentByBarcode(raw) {
-  for (const id of barcodeIdCandidates(raw)) {
+  const candidates = barcodeIdCandidates(raw);
+  for (const id of candidates) {
     const student = await findStudentById(id);
     if (student) return student;
   }
-  return null;
+
+  const students = await getStudents();
+  return (
+    students.find((student) => {
+      const sid = String(student.id || "").trim();
+      const sidDigits = sid.replace(/\D/g, "");
+      return candidates.some((candidate) => sid === candidate || (sidDigits && sidDigits === candidate));
+    }) || null
+  );
 }
 
 export async function loginStudent(id, password) {
@@ -571,8 +580,8 @@ export async function findAttendance(studentId, eventId) {
   const { data, error } = await supabase
     .from("attendance")
     .select("*")
-    .eq("student_id", studentId)
-    .eq("event_id", eventId)
+    .eq("student_id", String(studentId))
+    .eq("event_id", Number(eventId) || eventId)
     .maybeSingle();
   await throwIf(error);
   return data || null;
@@ -582,7 +591,7 @@ export async function addAttendance(studentId, eventId) {
   const supabase = requireSupabase();
   const { error } = await supabase
     .from("attendance")
-    .insert([{ student_id: studentId, event_id: eventId }]);
+    .insert([{ student_id: String(studentId), event_id: Number(eventId) || eventId }]);
   await throwIf(error);
 }
 
