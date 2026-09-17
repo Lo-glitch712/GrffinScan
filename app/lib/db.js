@@ -51,29 +51,109 @@ function withoutPassword(student) {
   return safe;
 }
 
-function throwStudentAuthError(error) {
-  if (!error) return;
-  const message = error.message || "";
-  if (
-    error.code === "42703" ||
-    error.code === "PGRST204" ||
-    /password/i.test(message)
-  ) {
-    throw new Error(
-      "Student passwords need a database update. In Supabase → SQL Editor, run: alter table public.students add column if not exists password text not null default '';"
-    );
+const STUDENT_VAULT_ID = "__gs_vault__";
+let passwordColumnEnabled;
+
+function isInternalStudentId(id) {
+  return String(id || "").startsWith("__gs_");
+}
+
+async function hasStudentPasswordColumn() {
+  if (passwordColumnEnabled !== undefined) return passwordColumnEnabled;
+  const supabase = requireSupabase();
+  const { error } = await supabase.from("students").select("password").limit(0);
+  passwordColumnEnabled = !error;
+  return passwordColumnEnabled;
+}
+
+async function readPasswordVault() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("students")
+    .select("lastname")
+    .eq("id", STUDENT_VAULT_ID)
+    .maybeSingle();
+  await throwIf(error);
+  try {
+    const parsed = JSON.parse(data?.lastname || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
-  throw error;
+}
+
+async function writePasswordVault(vault) {
+  const supabase = requireSupabase();
+  const row = {
+    id: STUDENT_VAULT_ID,
+    lastname: JSON.stringify(vault),
+    firstname: "system",
+    course: "SYS",
+    yearsection: "SYS",
+  };
+  const { data: existing, error: findError } = await supabase
+    .from("students")
+    .select("id")
+    .eq("id", STUDENT_VAULT_ID)
+    .maybeSingle();
+  await throwIf(findError);
+  if (existing) {
+    const { error } = await supabase
+      .from("students")
+      .update({ lastname: row.lastname })
+      .eq("id", STUDENT_VAULT_ID);
+    await throwIf(error);
+    return;
+  }
+  const { error } = await supabase.from("students").insert(row);
+  await throwIf(error);
+}
+
+async function storeStudentPassword(studentId, password) {
+  if (await hasStudentPasswordColumn()) {
+    const supabase = requireSupabase();
+    const { error } = await supabase.from("students").update({ password }).eq("id", studentId);
+    await throwIf(error);
+    return;
+  }
+  const vault = await readPasswordVault();
+  vault[studentId] = password;
+  await writePasswordVault(vault);
+}
+
+async function studentPasswordMatches(studentId, password, rowPassword) {
+  if (await hasStudentPasswordColumn()) {
+    return Boolean(rowPassword) && rowPassword === password;
+  }
+  const vault = await readPasswordVault();
+  return vault[studentId] === password;
+}
+
+async function studentHasPassword(studentId, rowPassword) {
+  if (await hasStudentPasswordColumn()) return Boolean(rowPassword);
+  const vault = await readPasswordVault();
+  return Boolean(vault[studentId]);
+}
+
+async function removeStoredStudentPassword(studentId) {
+  if (await hasStudentPasswordColumn()) return;
+  const vault = await readPasswordVault();
+  if (!(studentId in vault)) return;
+  delete vault[studentId];
+  await writePasswordVault(vault);
 }
 
 export async function getStudents() {
   const supabase = requireSupabase();
   const { data, error } = await supabase.from("students").select("*");
   await throwIf(error);
-  return (data || []).map((student) => withoutPassword(student));
+  return (data || [])
+    .filter((student) => !isInternalStudentId(student.id))
+    .map((student) => withoutPassword(student));
 }
 
 export async function findStudentById(id) {
+  if (isInternalStudentId(id)) return null;
   const supabase = requireSupabase();
   const { data, error } = await supabase
     .from("students")
@@ -81,6 +161,7 @@ export async function findStudentById(id) {
     .eq("id", id)
     .maybeSingle();
   await throwIf(error);
+  if (!data || isInternalStudentId(data.id)) return null;
   return withoutPassword(data);
 }
 
@@ -119,27 +200,45 @@ export async function findStudentByBarcode(raw) {
 
 export async function loginStudent(id, password) {
   const supabase = requireSupabase();
+  const studentId = String(id || "").trim();
+  if (!studentId || isInternalStudentId(studentId)) return null;
+
+  const hasPasswordCol = await hasStudentPasswordColumn();
   const { data, error } = await supabase
     .from("students")
-    .select("id, lastname, firstname, course, yearsection, password")
-    .eq("id", String(id).trim())
+    .select(
+      hasPasswordCol
+        ? "id, lastname, firstname, course, yearsection, password"
+        : "id, lastname, firstname, course, yearsection"
+    )
+    .eq("id", studentId)
     .maybeSingle();
-  throwStudentAuthError(error);
-  if (!data || !data.password || data.password !== password) return null;
+  await throwIf(error);
+  if (!data) return null;
+  if (!(await studentPasswordMatches(studentId, password, data.password))) return null;
   return withoutPassword(data);
 }
 
 export async function registerStudent(student) {
   const supabase = requireSupabase();
   const id = String(student.id).trim();
+  if (isInternalStudentId(id)) {
+    throw new Error("That Student ID cannot be used.");
+  }
+
+  const hasPasswordCol = await hasStudentPasswordColumn();
   const { data: existing, error: findError } = await supabase
     .from("students")
-    .select("id, lastname, firstname, course, yearsection, password, created_at")
+    .select(
+      hasPasswordCol
+        ? "id, lastname, firstname, course, yearsection, password, created_at"
+        : "id, lastname, firstname, course, yearsection, created_at"
+    )
     .eq("id", id)
     .maybeSingle();
-  throwStudentAuthError(findError);
+  await throwIf(findError);
 
-  if (existing?.password) return null;
+  if (existing && (await studentHasPassword(id, existing.password))) return null;
 
   const record = {
     id,
@@ -147,10 +246,11 @@ export async function registerStudent(student) {
     firstname: student.firstname,
     course: student.course,
     yearsection: student.yearsection,
-    password: student.password,
     created_at: existing?.created_at || student.created_at || new Date().toISOString(),
   };
+  if (hasPasswordCol) record.password = student.password;
 
+  let saved;
   if (existing) {
     const { data, error } = await supabase
       .from("students")
@@ -159,26 +259,33 @@ export async function registerStudent(student) {
         firstname: record.firstname,
         course: record.course,
         yearsection: record.yearsection,
-        password: record.password,
+        ...(hasPasswordCol ? { password: student.password } : {}),
       })
       .eq("id", id)
       .select()
       .single();
-    throwStudentAuthError(error);
-    return withoutPassword(data);
+    await throwIf(error);
+    saved = data;
+  } else {
+    const { data, error } = await supabase.from("students").insert([record]).select().single();
+    await throwIf(error);
+    saved = data;
   }
 
-  const { data, error } = await supabase.from("students").insert([record]).select().single();
-  throwStudentAuthError(error);
-  return withoutPassword(data);
+  await storeStudentPassword(id, student.password);
+  return withoutPassword(saved);
 }
 
 export async function saveStudent(student) {
   const supabase = requireSupabase();
+  const { password, ...rest } = student;
   const record = {
-    ...student,
+    ...rest,
     created_at: student.created_at || new Date().toISOString(),
   };
+  if (password && (await hasStudentPasswordColumn())) {
+    record.password = password;
+  }
   const { data, error } = await supabase
     .from("students")
     .insert([record])
@@ -203,6 +310,7 @@ export async function deleteStudent(id) {
   await throwIf(attendanceError);
   const { error } = await supabase.from("students").delete().eq("id", id);
   await throwIf(error);
+  await removeStoredStudentPassword(id);
 }
 
 export async function deleteStudentsWithoutAttendance() {
@@ -216,7 +324,10 @@ export async function deleteStudentsWithoutAttendance() {
   await throwIf(attendanceError);
 
   const attendedIds = new Set((attendance || []).map((row) => String(row.student_id)));
-  const unused = (students || []).filter((student) => !attendedIds.has(String(student.id)));
+  const unused = (students || []).filter(
+    (student) =>
+      !isInternalStudentId(student.id) && !attendedIds.has(String(student.id))
+  );
   if (!unused.length) return;
 
   const { error } = await supabase
