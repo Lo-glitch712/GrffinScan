@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { findAccount, setSession } from "../lib/db";
+import { useEffect, useState } from "react";
+import { ensureDefaultAccounts, findAccount, setSession } from "../lib/db";
 import AppShell from "../components/AppShell";
 
 export default function HostLoginPage() {
@@ -10,6 +10,10 @@ export default function HostLoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    ensureDefaultAccounts().catch((err) => console.error(err));
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();

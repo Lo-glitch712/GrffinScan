@@ -41,12 +41,14 @@ create table if not exists public.attendance (
 );
 
 insert into public.admins (username, password)
-select 'admin', 'admin'
-where not exists (select 1 from public.admins where username = 'admin');
+values ('admin', 'admin')
+on conflict (username) do update
+set password = excluded.password;
 
 insert into public.hosts (username, password)
-select 'host', 'host'
-where not exists (select 1 from public.hosts where username = 'host');
+values ('host', 'host')
+on conflict (username) do update
+set password = excluded.password;
 
 alter table public.students enable row level security;
 alter table public.events enable row level security;

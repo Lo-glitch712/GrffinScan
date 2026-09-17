@@ -311,13 +311,45 @@ export async function deleteHost(id) {
   await throwIf(error);
 }
 
+async function ensureAccount(table, username, password) {
+  const supabase = requireSupabase();
+  const { data: existing, error: findError } = await supabase
+    .from(table)
+    .select("id")
+    .eq("username", username)
+    .maybeSingle();
+  await throwIf(findError);
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from(table)
+      .update({ password })
+      .eq("id", existing.id);
+    await throwIf(error);
+    return;
+  }
+
+  const { error } = await supabase.from(table).insert({ username, password });
+  await throwIf(error);
+}
+
+export async function ensureDefaultAccounts() {
+  await ensureAccount("admins", "admin", "admin");
+  await ensureAccount("hosts", "host", "host");
+}
+
 export async function findAccount(username, password) {
   const supabase = requireSupabase();
+  const name = String(username || "").trim();
+  const pass = String(password || "");
+
+  await ensureDefaultAccounts();
+
   const { data: admin, error: adminError } = await supabase
     .from("admins")
     .select("*")
-    .eq("username", username)
-    .eq("password", password)
+    .eq("username", name)
+    .eq("password", pass)
     .maybeSingle();
   await throwIf(adminError);
   if (admin) return { type: "admin", account: admin };
@@ -325,8 +357,8 @@ export async function findAccount(username, password) {
   const { data: host, error: hostError } = await supabase
     .from("hosts")
     .select("*")
-    .eq("username", username)
-    .eq("password", password)
+    .eq("username", name)
+    .eq("password", pass)
     .maybeSingle();
   await throwIf(hostError);
   if (host) return { type: "host", account: host };

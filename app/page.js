@@ -1,10 +1,16 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "./components/AppShell";
+import { ensureDefaultAccounts } from "./lib/db";
 
 export default function Home() {
   const router = useRouter();
+
+  useEffect(() => {
+    ensureDefaultAccounts().catch((err) => console.error(err));
+  }, []);
 
   return (
     <AppShell home>
