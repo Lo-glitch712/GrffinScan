@@ -1003,6 +1003,27 @@ html.qr-screen .secure-qr * {
   background: #111;
 }
 
+.scan-video.is-qr {
+  aspect-ratio: 3 / 4;
+}
+
+.scan-overlay.is-qr {
+  background: transparent;
+}
+
+.scan-window.is-qr {
+  left: 16%;
+  right: 16%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 18px;
+  box-shadow: 0 0 0 200vmax rgba(8, 6, 2, 0.5);
+}
+
+.scan-window.is-qr::after {
+  display: none;
+}
+
 .scan-canvas {
   display: none;
 }
@@ -1099,11 +1120,12 @@ html.qr-screen .secure-qr * {
   font-weight: 700;
 }
 
-.scan-manual {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.scan-id {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  margin: 4px 0 !important;
 }
 
 .info p {

@@ -8,8 +8,7 @@ import {
   RGBLuminanceSource,
 } from "@zxing/library";
 
-const BARCODE_HINTS = new Map();
-BARCODE_HINTS.set(DecodeHintType.POSSIBLE_FORMATS, [
+const BARCODE_FORMATS = [
   BarcodeFormat.CODE_128,
   BarcodeFormat.CODE_39,
   BarcodeFormat.CODE_93,
@@ -19,11 +18,9 @@ BARCODE_HINTS.set(DecodeHintType.POSSIBLE_FORMATS, [
   BarcodeFormat.EAN_8,
   BarcodeFormat.UPC_A,
   BarcodeFormat.UPC_E,
-  BarcodeFormat.QR_CODE,
-]);
-BARCODE_HINTS.set(DecodeHintType.TRY_HARDER, true);
+];
 
-const NATIVE_FORMATS = [
+const NATIVE_1D = [
   "code_128",
   "code_39",
   "code_93",
@@ -33,14 +30,23 @@ const NATIVE_FORMATS = [
   "upc_a",
   "upc_e",
   "itf",
-  "qr_code",
 ];
 
-let nativeDetector;
+const nativeDetectors = {};
 
-function createZxingReader() {
+function hintsFor(mode) {
+  const hints = new Map();
+  hints.set(
+    DecodeHintType.POSSIBLE_FORMATS,
+    mode === "qr" ? [BarcodeFormat.QR_CODE] : BARCODE_FORMATS
+  );
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  return hints;
+}
+
+function createZxingReader(mode) {
   const reader = new MultiFormatReader();
-  reader.setHints(BARCODE_HINTS);
+  reader.setHints(hintsFor(mode));
   return reader;
 }
 
@@ -72,17 +78,34 @@ function decodeSource(reader, source) {
   return "";
 }
 
-function drawVideoStrip(video, canvas, { fullFrame = false } = {}) {
+function drawVideoRegion(video, canvas, mode, { fullFrame = false } = {}) {
   const width = video.videoWidth;
   const height = video.videoHeight;
   if (!width || !height) return false;
 
-  const sx = fullFrame ? 0 : Math.floor(width * 0.04);
-  const sy = fullFrame ? 0 : Math.floor(height * 0.38);
-  const sw = fullFrame ? width : Math.floor(width * 0.92);
-  const sh = fullFrame ? height : Math.max(48, Math.floor(height * 0.24));
+  let sx;
+  let sy;
+  let sw;
+  let sh;
+  if (fullFrame) {
+    sx = 0;
+    sy = 0;
+    sw = width;
+    sh = height;
+  } else if (mode === "qr") {
+    const size = Math.floor(Math.min(width, height) * 0.64);
+    sx = Math.floor((width - size) / 2);
+    sy = Math.floor((height - size) / 2);
+    sw = size;
+    sh = size;
+  } else {
+    sx = Math.floor(width * 0.04);
+    sy = Math.floor(height * 0.38);
+    sw = Math.floor(width * 0.92);
+    sh = Math.max(48, Math.floor(height * 0.24));
+  }
 
-  canvas.width = Math.min(1400, sw);
+  canvas.width = mode === "qr" ? Math.min(900, sw) : Math.min(1400, sw);
   canvas.height = Math.max(80, Math.round((canvas.width * sh) / sw));
   const context = canvas.getContext("2d", { willReadFrequently: true });
   context.imageSmoothingEnabled = false;
@@ -90,39 +113,41 @@ function drawVideoStrip(video, canvas, { fullFrame = false } = {}) {
   return true;
 }
 
-async function detectNative(video) {
+async function detectNative(video, mode) {
   if (typeof window === "undefined" || !window.BarcodeDetector) return "";
   try {
-    if (!nativeDetector) {
-      nativeDetector = new window.BarcodeDetector({ formats: NATIVE_FORMATS });
+    if (!nativeDetectors[mode]) {
+      nativeDetectors[mode] = new window.BarcodeDetector({
+        formats: mode === "qr" ? ["qr_code"] : NATIVE_1D,
+      });
     }
-    const codes = await nativeDetector.detect(video);
+    const codes = await nativeDetectors[mode].detect(video);
     return codes?.[0]?.rawValue?.trim() || "";
   } catch {
-    nativeDetector = null;
+    nativeDetectors[mode] = null;
     return "";
   }
 }
 
-export function createBarcodeLoopReader() {
-  return createZxingReader();
+export function createBarcodeLoopReader(mode = "barcode") {
+  return createZxingReader(mode);
 }
 
-export async function detectBarcodeFromVideo(video, canvas, reader) {
+export async function detectBarcodeFromVideo(video, canvas, reader, mode = "barcode") {
   if (!video || video.readyState < 2) return "";
 
-  const nativeText = await detectNative(video);
+  const nativeText = await detectNative(video, mode);
   if (nativeText) return nativeText;
 
-  const zxing = reader || createZxingReader();
+  const zxing = reader || createZxingReader(mode);
   if (!canvas) return "";
 
-  if (drawVideoStrip(video, canvas)) {
-    const stripText = decodeSource(zxing, canvasToLuminance(canvas));
-    if (stripText) return stripText;
+  if (drawVideoRegion(video, canvas, mode)) {
+    const regionText = decodeSource(zxing, canvasToLuminance(canvas));
+    if (regionText) return regionText;
   }
 
-  if (drawVideoStrip(video, canvas, { fullFrame: true })) {
+  if (drawVideoRegion(video, canvas, mode, { fullFrame: true })) {
     return decodeSource(zxing, canvasToLuminance(canvas));
   }
 

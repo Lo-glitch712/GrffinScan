@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   addAttendance,
   findAttendance,
@@ -19,16 +19,18 @@ function studentLabel(student) {
   return `${student.lastname}, ${student.firstname}`;
 }
 
-export default function ScanPage() {
+function ScanPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const qrMode = searchParams.get("mode") === "qr";
+  const scanMode = qrMode ? "qr" : "barcode";
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState("");
   const [popupType, setPopupType] = useState(null);
   const [popupMessage, setPopupMessage] = useState("");
   const [scannedStudent, setScannedStudent] = useState(null);
   const [ready, setReady] = useState(false);
-  const [manualId, setManualId] = useState("");
-  const [marking, setMarking] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const selectedEventRef = useRef(selectedEvent);
   const videoRef = useRef(null);
@@ -78,12 +80,10 @@ export default function ScanPage() {
         return;
       }
 
-      await addAttendance(student.id, eventId);
-      showResult("success", "Attendance recorded.", student);
-      setManualId("");
+      showResult("confirm", "Is this Student ID correct?", student);
     } catch (err) {
       console.error(err);
-      showResult("error", err?.message || "Failed to mark attendance.");
+      showResult("error", err?.message || "Failed to read barcode.");
     }
   };
 
@@ -99,14 +99,15 @@ export default function ScanPage() {
     let cancelled = false;
     let timer = 0;
     let stream;
-    const reader = createBarcodeLoopReader();
+    const reader = createBarcodeLoopReader(scanMode);
 
     const tick = async () => {
       if (cancelled || scanLockRef.current) return;
       const text = await detectBarcodeFromVideo(
         videoRef.current,
         canvasRef.current,
-        reader
+        reader,
+        scanMode
       );
       if (!text || cancelled || scanLockRef.current) return;
       scanLockRef.current = true;
@@ -170,7 +171,7 @@ export default function ScanPage() {
       clearInterval(sessionTimer);
       stream?.getTracks?.().forEach((track) => track.stop());
     };
-  }, [router]);
+  }, [router, scanMode]);
 
   const fetchEvents = async () => {
     const openEvents = (await getEvents()).filter((evt) => evt.is_open);
@@ -181,36 +182,42 @@ export default function ScanPage() {
   const closePopup = () => {
     setPopupType(null);
     setPopupMessage("");
+    setSaving(false);
     scanLockRef.current = false;
   };
 
-  const submitManualId = async (event) => {
-    event.preventDefault();
-    const id = manualId.trim();
-    if (!id) {
-      showResult("error", "Enter a Student ID.");
-      return;
-    }
-    setMarking(true);
-    scanLockRef.current = true;
+  const confirmAttendance = async () => {
+    const eventId = selectedEventRef.current;
+    if (!scannedStudent || !eventId || saving) return;
+
+    setSaving(true);
     try {
-      await handleScan(id);
+      const existing = await findAttendance(scannedStudent.id, eventId);
+      if (existing) {
+        showResult("already", "Already in attendance for this event.", scannedStudent);
+        return;
+      }
+      await addAttendance(scannedStudent.id, eventId);
+      showResult("success", "Attendance recorded.", scannedStudent);
+    } catch (err) {
+      console.error(err);
+      showResult("error", err?.message || "Failed to mark attendance.");
     } finally {
-      setMarking(false);
+      setSaving(false);
     }
   };
 
   const resultClass =
     popupType === "success"
       ? "is-success"
-      : popupType === "already"
+      : popupType === "already" || popupType === "confirm"
         ? "is-already"
         : popupType === "error"
           ? "is-error"
           : "is-idle";
 
   return (
-    <AppShell title="Scan Barcode">
+    <AppShell title={qrMode ? "Scan QR Code" : "Scan Barcode"}>
       <div className="stack">
         {events.length > 0 ? (
           <Select
@@ -228,21 +235,25 @@ export default function ScanPage() {
           <p className="muted">No open events available.</p>
         )}
 
-        <div className="scan-stage">
+        <div className={`scan-stage ${qrMode ? "is-qr" : ""}`}>
           <video
             ref={videoRef}
-            className="scan-video"
+            className={`scan-video${qrMode ? " is-qr" : ""}`}
             muted
             playsInline
             autoPlay
           />
-          <div className="scan-overlay" aria-hidden="true">
-            <div className="scan-window" />
+          <div className={`scan-overlay${qrMode ? " is-qr" : ""}`} aria-hidden="true">
+            <div className={`scan-window${qrMode ? " is-qr" : ""}`} />
           </div>
           <canvas ref={canvasRef} className="scan-canvas" />
         </div>
         <p className="muted scan-hint">
-          {ready ? "Fill the gold box with the barcode on the ID" : "Starting camera..."}
+          {ready
+            ? qrMode
+              ? "Align the student QR inside the gold square"
+              : "Fill the gold box with the barcode on the ID"
+            : "Starting camera..."}
         </p>
 
         <div className={`scan-result ${resultClass}`}>
@@ -260,23 +271,6 @@ export default function ScanPage() {
           )}
         </div>
 
-        <form className="scan-manual" onSubmit={submitManualId}>
-          <input
-            className="field"
-            name="manualId"
-            value={manualId}
-            onChange={(event) => setManualId(event.target.value)}
-            placeholder="Or type Student ID"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            inputMode="numeric"
-          />
-          <button className="btn" type="submit" disabled={marking}>
-            {marking ? "Saving..." : "Mark attendance"}
-          </button>
-        </form>
-
         <button className="btn btn-ghost" onClick={() => router.push("/host/dashboard")}>
           Back
         </button>
@@ -289,17 +283,42 @@ export default function ScanPage() {
             {scannedStudent && (
               <div className="info">
                 <p><strong>{studentLabel(scannedStudent)}</strong></p>
-                <p className="muted">{scannedStudent.id}</p>
+                <p className="scan-id">{scannedStudent.id}</p>
                 <p className="muted">{scannedStudent.course} · {scannedStudent.yearsection}</p>
               </div>
             )}
-            <button className="btn" onClick={closePopup}>
-              OK
-            </button>
+            {popupType === "confirm" ? (
+              <div className="confirm-actions">
+                <button className="btn btn-ghost" onClick={closePopup} disabled={saving}>
+                  No
+                </button>
+                <button className="btn" onClick={confirmAttendance} disabled={saving}>
+                  {saving ? "Saving..." : "Yes, confirm"}
+                </button>
+              </div>
+            ) : (
+              <button className="btn" onClick={closePopup}>
+                OK
+              </button>
+            )}
           </div>
         </div>,
         document.body
       )}
     </AppShell>
+  );
+}
+
+export default function ScanPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell title="Scan">
+          <p className="muted">Loading...</p>
+        </AppShell>
+      }
+    >
+      <ScanPageInner />
+    </Suspense>
   );
 }
