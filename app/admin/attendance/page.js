@@ -9,8 +9,7 @@ import {
   getAttendanceView,
   studentAttendedEvent,
 } from "../../lib/db";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { downloadAttendancePdf } from "../../lib/attendancePdf";
 import AppShell from "../../components/AppShell";
 import AttendanceSummary from "../../components/AttendanceSummary";
 import Select from "../../components/Select";
@@ -126,68 +125,18 @@ export default function AttendancePage() {
     }
   };
 
-  const addTable = (doc, eventsList, students, startY) => {
-    autoTable(doc, {
-      head: [[
-        "Last Name",
-        "First Name",
-        "Course",
-        "YearSection",
-        ...eventsList.map((evt) => evt.name),
-      ]],
-      body: students.map((student) => [
-        student.lastname,
-        student.firstname,
-        student.course,
-        student.yearsection,
-        ...eventsList.map((evt) => studentAttendedEvent(student, evt.id) ? "Attended" : ""),
-      ]),
-      startY,
-      theme: "grid",
-      styles: { fontSize: 9, cellPadding: 3 },
-      headStyles: { fillColor: [196, 160, 53] },
-      margin: { left: 20, right: 20 },
-      tableWidth: "auto",
-    });
-  };
-
   const downloadPDF = async () => {
     const view = await fetchViewForDownload();
-    const exportGroups = view?.groups;
-    const exportRecords = view?.records || [];
-    if (!view || (!exportGroups?.length && !exportRecords.length)) {
-      alert("No records to export.");
-      return;
-    }
-
-    const doc = new jsPDF("l", "pt", "a4");
-    const eventsList = view.events || events;
-    const groupLabel = GROUP_OPTIONS.find((option) => option.value === filter.groupBy)?.label || "All";
-    doc.setFontSize(14);
-    doc.text(`Attendance · ${groupLabel} · ${view.stats.total} students`, 40, 40);
-    const programLine = view.stats.programs.map((program) => `${program.name} ${program.count}`).join("  ·  ");
-    if (programLine) {
-      doc.setFontSize(10);
-      doc.text(programLine, 40, 58);
-    }
-
-    if (exportGroups?.length) {
-      exportGroups.forEach((group, index) => {
-        if (index > 0) doc.addPage();
-        const top = index === 0 ? 80 : 40;
-        doc.setFontSize(12);
-        doc.text(`${group.label} — ${group.total} students`, 40, top);
-        addTable(doc, eventsList, group.students, top + 16);
+    try {
+      downloadAttendancePdf({
+        view,
+        events,
+        filter,
+        groupLabel: GROUP_OPTIONS.find((option) => option.value === filter.groupBy)?.label || "All",
       });
-    } else {
-      addTable(doc, eventsList, exportRecords, programLine ? 76 : 60);
+    } catch (err) {
+      alert(err.message || "No records to export.");
     }
-
-    const coursePart = filter.course ? filter.course.replace(/\s+/g, "_") : "AllCourses";
-    const yearSectionPart = filter.yearSection ? filter.yearSection.replace(/\s+/g, "_") : "AllYearSections";
-    const fileName = `Attendance_${filter.groupBy}_${coursePart}_${yearSectionPart}.pdf`;
-
-    doc.save(fileName);
   };
 
   const renderStudent = (student) => (
