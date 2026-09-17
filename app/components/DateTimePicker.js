@@ -10,6 +10,7 @@ const MONTHS = [
 ];
 const HOURS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const MINUTES = Array.from({ length: 60 }, (_, i) => i);
+const WHEEL_COPIES = 5;
 
 function pad(value) {
   return String(value).padStart(2, "0");
@@ -57,6 +58,103 @@ function sameDay(a, b) {
   );
 }
 
+function InfiniteWheel({ values, selected, onChange, format = pad }) {
+  const colRef = useRef(null);
+  const jumping = useRef(false);
+  const timer = useRef(0);
+
+  const items = useMemo(() => {
+    const list = [];
+    for (let copy = 0; copy < WHEEL_COPIES; copy += 1) {
+      for (const value of values) list.push({ copy, value });
+    }
+    return list;
+  }, [values]);
+
+  const centerOn = (value) => {
+    const col = colRef.current;
+    if (!col) return;
+    const buttons = col.querySelectorAll("button");
+    const index = values.indexOf(value);
+    const target = buttons[Math.floor(WHEEL_COPIES / 2) * values.length + Math.max(0, index)];
+    if (!target) return;
+    jumping.current = true;
+    col.scrollTop = target.offsetTop - col.clientHeight / 2 + target.offsetHeight / 2;
+    window.setTimeout(() => {
+      jumping.current = false;
+    }, 0);
+  };
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => centerOn(selected));
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected]);
+
+  const wrap = () => {
+    const col = colRef.current;
+    if (!col || !values.length) return;
+    const itemHeight = col.querySelector("button")?.offsetHeight || 36;
+    const loop = values.length * itemHeight;
+    if (loop <= 0) return;
+    if (col.scrollTop < loop) {
+      jumping.current = true;
+      col.scrollTop += loop;
+      window.setTimeout(() => {
+        jumping.current = false;
+      }, 0);
+    } else if (col.scrollTop > loop * (WHEEL_COPIES - 2)) {
+      jumping.current = true;
+      col.scrollTop -= loop;
+      window.setTimeout(() => {
+        jumping.current = false;
+      }, 0);
+    }
+  };
+
+  const snapNearest = () => {
+    const col = colRef.current;
+    if (!col) return;
+    const center = col.scrollTop + col.clientHeight / 2;
+    let best = null;
+    let bestDist = Infinity;
+    col.querySelectorAll("button").forEach((button) => {
+      const mid = button.offsetTop + button.offsetHeight / 2;
+      const dist = Math.abs(mid - center);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = button;
+      }
+    });
+    if (!best) return;
+    const next = Number(best.dataset.value);
+    if (!Number.isNaN(next) && next !== selected) onChange(next);
+    else centerOn(selected);
+  };
+
+  const onScroll = () => {
+    if (jumping.current) return;
+    wrap();
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(snapNearest, 80);
+  };
+
+  return (
+    <div className="time-col" ref={colRef} onScroll={onScroll}>
+      {items.map((item) => (
+        <button
+          key={`${item.copy}-${item.value}`}
+          type="button"
+          data-value={item.value}
+          className={item.value === selected ? "is-on" : ""}
+          onClick={() => onChange(item.value)}
+        >
+          {format(item.value)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function DateTimePicker({
   mode = "date",
   value,
@@ -66,8 +164,6 @@ export default function DateTimePicker({
   const isTime = mode === "time";
   const rootRef = useRef(null);
   const popRef = useRef(null);
-  const hourColRef = useRef(null);
-  const minColRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
   const selected = isTime
@@ -100,7 +196,10 @@ export default function DateTimePicker({
       return undefined;
     }
     const trigger = rootRef.current?.querySelector(".datetime-trigger");
-    const onPlace = () => trigger && place(trigger);
+    const onPlace = (event) => {
+      if (event?.target?.closest?.(".time-col, .cal-pop")) return;
+      if (trigger) place(trigger);
+    };
     onPlace();
     window.addEventListener("resize", onPlace);
     document.addEventListener("scroll", onPlace, true);
@@ -113,17 +212,6 @@ export default function DateTimePicker({
   const hour12 = ((selected.getHours() + 11) % 12) + 1;
   const minute = selected.getMinutes();
   const isPm = selected.getHours() >= 12;
-
-  useEffect(() => {
-    if (!open || !isTime) return;
-    const snap = (col) => {
-      const on = col?.querySelector(".is-on");
-      if (!col || !on) return;
-      col.scrollTop = on.offsetTop - col.clientHeight / 2 + on.clientHeight / 2;
-    };
-    snap(hourColRef.current);
-    snap(minColRef.current);
-  }, [open, coords, isTime, hour12, minute]);
 
   const days = useMemo(() => {
     const first = new Date(view.getFullYear(), view.getMonth(), 1);
@@ -226,30 +314,8 @@ export default function DateTimePicker({
         >
           {isTime ? (
             <div className="time-cols">
-              <div className="time-col" ref={hourColRef}>
-                {HOURS.map((hour) => (
-                  <button
-                    key={hour}
-                    type="button"
-                    className={hour12 === hour ? "is-on" : ""}
-                    onClick={() => setHour(hour)}
-                  >
-                    {pad(hour)}
-                  </button>
-                ))}
-              </div>
-              <div className="time-col" ref={minColRef}>
-                {MINUTES.map((mins) => (
-                  <button
-                    key={mins}
-                    type="button"
-                    className={minute === mins ? "is-on" : ""}
-                    onClick={() => setMinute(mins)}
-                  >
-                    {pad(mins)}
-                  </button>
-                ))}
-              </div>
+              <InfiniteWheel values={HOURS} selected={hour12} onChange={setHour} />
+              <InfiniteWheel values={MINUTES} selected={minute} onChange={setMinute} />
               <div className="time-col time-period">
                 <button
                   type="button"

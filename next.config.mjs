@@ -8,6 +8,9 @@ const nextConfig = {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
       "sb_publishable_nxZC6BKIy5O3QmBgKhudLA_eHNYSv2O",
   },
+  async redirects() {
+    return [{ source: "/student/register", destination: "/student", permanent: false }];
+  },
   async headers() {
     return [
       {

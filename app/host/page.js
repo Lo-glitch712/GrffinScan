@@ -62,7 +62,7 @@ export default function HostLoginPage() {
   };
 
   return (
-    <AppShell title="Host">
+    <AppShell title="Host" backTo="/">
       <form className="stack" onSubmit={handleLogin}>
         <input
           className="field"
@@ -86,9 +86,6 @@ export default function HostLoginPage() {
         />
         <button className="btn" type="submit" disabled={loading}>
           {loading ? "Logging in..." : "Login"}
-        </button>
-        <button className="btn btn-ghost" type="button" onClick={() => router.push("/")}>
-          Back
         </button>
       </form>
     </AppShell>

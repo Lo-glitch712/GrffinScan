@@ -3,27 +3,38 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getEvents,
-  getStudentRecords,
-  getStudents,
+  getAttendanceView,
   isHostSessionValid,
+  studentAttendedEvent,
 } from "../../lib/db";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import AppShell from "../../components/AppShell";
+import AttendanceSummary from "../../components/AttendanceSummary";
 import Select from "../../components/Select";
+import { formatStudentName } from "../../lib/studentFormat";
 
 const PAGE_SIZE = 50;
 const DOWNLOAD_LIMIT = 60;
+const GROUP_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "day", label: "By day" },
+  { value: "week", label: "By week" },
+  { value: "month", label: "By month" },
+];
 
 export default function AttendancePage() {
   const router = useRouter();
   const [events, setEvents] = useState([]);
   const [records, setRecords] = useState([]);
-  const [allStudents, setAllStudents] = useState([]);
+  const [groups, setGroups] = useState(null);
+  const [stats, setStats] = useState({ total: 0, programs: [] });
+  const [hasMore, setHasMore] = useState(false);
+  const [courses, setCourses] = useState([]);
+  const [yearSections, setYearSections] = useState([]);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState({ course: "", yearSection: "", search: "" });
+  const [filter, setFilter] = useState({ course: "", yearSection: "", search: "", groupBy: "all" });
 
   useEffect(() => {
     const hostInfo = sessionStorage.getItem("hostInfo");
@@ -31,9 +42,6 @@ export default function AttendancePage() {
       router.push("/host");
       return;
     }
-
-    fetchEvents();
-    fetchAllStudents();
 
     const interval = setInterval(() => {
       void (async () => {
@@ -56,14 +64,6 @@ export default function AttendancePage() {
     return () => clearInterval(interval);
   }, [router]);
 
-  const fetchEvents = async () => {
-    setEvents(await getEvents());
-  };
-
-  const fetchAllStudents = async () => {
-    setAllStudents(await getStudents());
-  };
-
   useEffect(() => {
     fetchAttendance();
   }, [filter, page]);
@@ -71,101 +71,135 @@ export default function AttendancePage() {
   const fetchAttendance = async () => {
     setLoading(true);
     try {
-      const merged = await getStudentRecords({
+      const grouped = filter.groupBy !== "all";
+      const view = await getAttendanceView({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,
-        page,
-        pageSize: PAGE_SIZE,
+        groupBy: filter.groupBy,
+        page: grouped ? 0 : page,
+        pageSize: grouped ? undefined : PAGE_SIZE,
       });
-      setRecords(merged);
+      setEvents(view.events);
+      setStats(view.stats);
+      setGroups(view.groups);
+      setRecords(view.records);
+      setHasMore(view.hasMore);
+      setCourses(view.courses || []);
+      setYearSections(view.yearSections || []);
     } catch (err) {
       console.error("Fetch error:", err);
     }
     setLoading(false);
   };
 
-  const fetchAllForDownload = async () => {
+  const fetchViewForDownload = async () => {
     try {
-      return await getStudentRecords({
+      return await getAttendanceView({
         course: filter.course,
         yearSection: filter.yearSection,
         search: filter.search,
-        limit: DOWNLOAD_LIMIT,
+        groupBy: filter.groupBy,
+        limit: filter.groupBy === "all" ? DOWNLOAD_LIMIT : undefined,
       });
     } catch (err) {
       console.error("Download fetch error:", err);
-      return [];
+      return null;
     }
   };
 
-  const downloadPDF = async () => {
-    if (events.length === 0) {
-      alert("Events not loaded yet.");
-      return;
-    }
-
-    const allRecords = await fetchAllForDownload();
-    if (allRecords.length === 0) {
-      alert("No records to export.");
-      return;
-    }
-
-    const doc = new jsPDF("l", "pt", "a4");
-
-    const tableHead = [[
-      "Last Name",
-      "First Name",
-      "Course",
-      "YearSection",
-      ...events.map((evt) => evt.name),
-    ]];
-
-    const tableBody = allRecords.map((student) => [
-      student.lastname,
-      student.firstname,
-      student.course,
-      student.yearsection,
-      ...events.map((evt) => (student.events.includes(evt.id) ? "Attended" : "")),
-    ]);
-
-    doc.setFontSize(14);
-    doc.text(`Attendance Records (Showing ${allRecords.length} students)`, 40, 40);
-
+  const addTable = (doc, eventsList, students, startY) => {
     autoTable(doc, {
-      head: tableHead,
-      body: tableBody,
-      startY: 60,
+      head: [[
+        "Last Name",
+        "First Name",
+        "Course",
+        "YearSection",
+        ...eventsList.map((evt) => evt.name),
+      ]],
+      body: students.map((student) => [
+        student.lastname,
+        student.firstname,
+        student.course,
+        student.yearsection,
+        ...eventsList.map((evt) => (studentAttendedEvent(student, evt.id) ? "Attended" : "")),
+      ]),
+      startY,
       theme: "grid",
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [196, 160, 53] },
       margin: { left: 20, right: 20 },
       tableWidth: "auto",
     });
+  };
+
+  const downloadPDF = async () => {
+    const view = await fetchViewForDownload();
+    const exportGroups = view?.groups;
+    const exportRecords = view?.records || [];
+    if (!view || (!exportGroups?.length && !exportRecords.length)) {
+      alert("No records to export.");
+      return;
+    }
+
+    const doc = new jsPDF("l", "pt", "a4");
+    const eventsList = view.events || events;
+    const groupLabel = GROUP_OPTIONS.find((option) => option.value === filter.groupBy)?.label || "All";
+    doc.setFontSize(14);
+    doc.text(`Attendance · ${groupLabel} · ${view.stats.total} students`, 40, 40);
+    const programLine = view.stats.programs.map((program) => `${program.name} ${program.count}`).join("  ·  ");
+    if (programLine) {
+      doc.setFontSize(10);
+      doc.text(programLine, 40, 58);
+    }
+
+    if (exportGroups?.length) {
+      exportGroups.forEach((group, index) => {
+        if (index > 0) doc.addPage();
+        const top = index === 0 ? 80 : 40;
+        doc.setFontSize(12);
+        doc.text(`${group.label} — ${group.total} students`, 40, top);
+        addTable(doc, eventsList, group.students, top + 16);
+      });
+    } else {
+      addTable(doc, eventsList, exportRecords, programLine ? 76 : 60);
+    }
 
     const coursePart = filter.course ? filter.course.replace(/\s+/g, "_") : "AllCourses";
     const yearSectionPart = filter.yearSection ? filter.yearSection.replace(/\s+/g, "_") : "AllYearSections";
-    const fileName = `Attendance_${coursePart}_${yearSectionPart}.pdf`;
+    const fileName = `Attendance_${filter.groupBy}_${coursePart}_${yearSectionPart}.pdf`;
 
     doc.save(fileName);
   };
 
-  const uniqueCourses = [...new Set(allStudents.map((s) => s.course))].sort((a, b) => a.localeCompare(b));
-  const uniqueYearSections = [...new Set(
-    allStudents
-      .filter(s => !filter.course || s.course === filter.course)
-      .map(s => s.yearsection)
-  )].sort((a, b) => a.localeCompare(b));
+  const renderStudent = (student) => (
+    <div key={student.id} className="card">
+      <div>
+        <strong>{formatStudentName(student)}</strong>
+        <p className="muted">{student.course} · {student.yearsection}</p>
+      </div>
+      <div className="row">
+        {events.map((evt) => {
+          if (!studentAttendedEvent(student, evt.id)) return null;
+          return (
+            <span key={evt.id} className="badge is-on">
+              {evt.name}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const empty = filter.groupBy === "all" ? records.length === 0 : !groups?.length;
 
   return (
     <AppShell
       title="Attendance"
       wide
+      backTo="/host/dashboard"
       footer={
         <div className="bottom-bar">
-          <button className="btn btn-white" onClick={() => router.push("/host/dashboard")}>
-            Back
-          </button>
           <button className="btn" onClick={downloadPDF}>
             Download PDF
           </button>
@@ -173,6 +207,13 @@ export default function AttendancePage() {
       }
     >
       <div className="stack-wide">
+        <Select
+          value={filter.groupBy}
+          onChange={(e) => { setPage(0); setFilter({ ...filter, groupBy: e.target.value }); }}
+          placeholder="Sort by"
+          options={GROUP_OPTIONS}
+        />
+
         <div className="row">
           <Select
             value={filter.course}
@@ -180,7 +221,7 @@ export default function AttendancePage() {
             placeholder="Courses"
             options={[
               { value: "", label: "Courses" },
-              ...uniqueCourses.map((c) => ({ value: c, label: c })),
+              ...courses.map((c) => ({ value: c, label: c })),
             ]}
           />
           <Select
@@ -189,7 +230,7 @@ export default function AttendancePage() {
             placeholder="Year & Section"
             options={[
               { value: "", label: "Year & Section" },
-              ...uniqueYearSections.map((ys) => ({ value: ys, label: ys })),
+              ...yearSections.map((ys) => ({ value: ys, label: ys })),
             ]}
           />
         </div>
@@ -207,35 +248,29 @@ export default function AttendancePage() {
 
         {loading ? (
           <p className="muted">Loading...</p>
-        ) : records.length === 0 ? (
-          <p className="muted">No attendance records.</p>
-        ) : (
+        ) : empty ? (
+          <p className="muted">No attendance yet. Students show up here after their ID is scanned.</p>
+        ) : filter.groupBy === "all" ? (
           <>
-            {records.map(student => (
-              <div key={student.id} className="card">
-                <div>
-                  <strong>{student.lastname}, {student.firstname}</strong>
-                  <p className="muted">{student.course} · {student.yearsection}</p>
-                </div>
-                <div className="row">
-                  {events.map(evt => (
-                    <span
-                      key={evt.id}
-                      className={student.events.includes(evt.id) ? "badge is-on" : "badge"}
-                    >
-                      {evt.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-
+            <AttendanceSummary total={stats.total} programs={stats.programs} />
+            {records.map(renderStudent)}
             <div className="row" style={{ justifyContent: "center", alignItems: "center" }}>
               <button className="btn btn-sm btn-ghost" onClick={() => setPage(p => Math.max(p - 1, 0))} disabled={page === 0}>Previous</button>
               <span className="muted">Page {page + 1}</span>
-              <button className="btn btn-sm btn-ghost" onClick={() => records.length === PAGE_SIZE && setPage(p => p + 1)} disabled={records.length < PAGE_SIZE}>Next</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => hasMore && setPage(p => p + 1)} disabled={!hasMore}>Next</button>
             </div>
           </>
+        ) : (
+          groups.map((group) => (
+            <section key={group.key} className="att-group">
+              <AttendanceSummary
+                label={group.label}
+                total={group.total}
+                programs={group.programs}
+              />
+              {group.students.map(renderStudent)}
+            </section>
+          ))
         )}
       </div>
     </AppShell>

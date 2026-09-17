@@ -11,6 +11,8 @@ create table if not exists public.students (
 );
 
 alter table public.students add column if not exists password text not null default '';
+alter table public.students add column if not exists middlename text not null default '';
+alter table public.students add column if not exists sex text not null default '';
 
 create table if not exists public.events (
   id bigint generated always as identity primary key,
@@ -37,8 +39,11 @@ create table if not exists public.admins (
 create table if not exists public.attendance (
   student_id text not null references public.students(id) on delete cascade,
   event_id bigint not null references public.events(id) on delete cascade,
+  created_at timestamptz default now(),
   primary key (student_id, event_id)
 );
+
+alter table public.attendance add column if not exists created_at timestamptz default now();
 
 insert into public.admins (username, password)
 values ('admin', 'admin')

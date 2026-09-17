@@ -115,9 +115,37 @@ select {
 }
 
 .app-header {
+  position: relative;
   text-align: center;
   padding: 32px 20px 8px;
   z-index: 2;
+}
+
+.app-header.has-back {
+  padding-top: 52px;
+}
+
+.back-link {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 8px 20px rgba(40, 30, 12, 0.06);
+}
+
+.back-link:active {
+  transform: scale(0.98);
 }
 
 .brand {
@@ -198,6 +226,23 @@ select {
   color: var(--muted);
   font-size: 13px;
   z-index: 1;
+}
+
+.page-transition {
+  height: 100%;
+  min-height: 100%;
+  animation: page-in 0.34s var(--ease-out) both;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .stack {
@@ -425,7 +470,7 @@ select {
 
 .cal-pop {
   position: fixed;
-  z-index: 80;
+  z-index: 500;
   padding: 10px;
   border-radius: 18px;
   border: 1px solid var(--line);
@@ -546,6 +591,7 @@ select {
   border-radius: 12px;
   background: #fff;
   scrollbar-width: none;
+  overscroll-behavior: contain;
 }
 
 .time-col::-webkit-scrollbar {
@@ -724,6 +770,30 @@ select {
   box-shadow: 0 0 0 2px rgba(194, 59, 50, 0.28);
 }
 
+.att-summary-total {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.att-summary h3 {
+  margin-bottom: 4px;
+}
+
+.att-programs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.att-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .row {
   display: flex;
   gap: 8px;
@@ -811,6 +881,30 @@ select {
   padding: 10px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.35);
   white-space: nowrap;
+}
+
+.table .select-col {
+  width: 40px;
+  text-align: center;
+}
+
+.table:not(.is-selecting) .select-col {
+  display: none;
+}
+
+.table tbody tr {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.table input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #d4b24a;
+}
+
+.table tbody tr.is-selected {
+  background: rgba(228, 197, 106, 0.22);
 }
 
 .badge {
@@ -1128,6 +1222,29 @@ html.qr-screen .secure-qr * {
   margin: 4px 0 !important;
 }
 
+.scan-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 12px !important;
+}
+
+.scan-student .muted {
+  margin-bottom: 2px;
+}
+
+.scan-result strong {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.scan-result-id {
+  font-size: 18px;
+  letter-spacing: 0.04em;
+}
+
 .info p {
   margin: 0 0 6px;
 }
@@ -1200,13 +1317,17 @@ html.screenshot-blocked::after {
   .btn:active {
     transform: none;
   }
+
+  .page-transition {
+    animation: none;
+  }
 }
 
 .bottom-bar {
   display: flex;
   flex-direction: row;
   flex-wrap: nowrap;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 10px;
   width: 100%;

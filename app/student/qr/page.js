@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "../../components/AppShell";
 import { getCurrentEvent } from "../../lib/db";
+import { formatStudentName } from "../../lib/studentFormat";
 
 function formatEventTime(event) {
   if (!event?.starts_at && !event?.ends_at) return "";
@@ -53,6 +54,7 @@ export default function QRPage() {
     <AppShell
       title={event?.name || "No event"}
       subtitle={formatEventTime(event)}
+      backTo="/student"
     >
       <div className="qr-page">
         <div className="qr-stage">
@@ -71,15 +73,11 @@ export default function QRPage() {
           </div>
 
           <div className="qr-id">
-            <p className="qr-id-name">{student.lastname}, {student.firstname}</p>
+            <p className="qr-id-name">{formatStudentName(student)}</p>
             <p>{student.id}</p>
-            <p>{student.course} · {student.yearsection}</p>
+            <p>{student.course}{student.yearsection ? ` · ${student.yearsection}` : ""}</p>
           </div>
         </div>
-
-        <button className="btn btn-ghost" onClick={() => router.push("/student")}>
-          Back
-        </button>
       </div>
     </AppShell>
   );

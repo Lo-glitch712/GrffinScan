@@ -13,11 +13,7 @@ import {
 import { createBarcodeLoopReader, detectBarcodeFromVideo } from "../../lib/readBarcode";
 import AppShell from "../../components/AppShell";
 import Select from "../../components/Select";
-
-function studentLabel(student) {
-  if (!student) return "";
-  return `${student.lastname}, ${student.firstname}`;
-}
+import { formatStudentName } from "../../lib/studentFormat";
 
 function ScanPageInner() {
   const router = useRouter();
@@ -217,7 +213,7 @@ function ScanPageInner() {
           : "is-idle";
 
   return (
-    <AppShell title={qrMode ? "Scan QR Code" : "Scan Barcode"}>
+    <AppShell title={qrMode ? "Scan QR Code" : "Scan Barcode"} backTo="/host/dashboard">
       <div className="stack">
         {events.length > 0 ? (
           <Select
@@ -262,7 +258,8 @@ function ScanPageInner() {
               {popupMessage}
               {scannedStudent ? (
                 <strong>
-                  {studentLabel(scannedStudent)} · {scannedStudent.id}
+                  {formatStudentName(scannedStudent)}
+                  <span className="scan-result-id">{scannedStudent.id}</span>
                 </strong>
               ) : null}
             </>
@@ -270,10 +267,6 @@ function ScanPageInner() {
             "Scan a student ID to record attendance"
           )}
         </div>
-
-        <button className="btn btn-ghost" onClick={() => router.push("/host/dashboard")}>
-          Back
-        </button>
       </div>
 
       {popupType && typeof document !== "undefined" && createPortal(
@@ -281,10 +274,15 @@ function ScanPageInner() {
           <div className="modal modal-solid confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <h3>{popupMessage}</h3>
             {scannedStudent && (
-              <div className="info">
-                <p><strong>{studentLabel(scannedStudent)}</strong></p>
+              <div className="info scan-student">
+                <p className="muted">Name</p>
+                <p className="scan-name">{formatStudentName(scannedStudent)}</p>
+                <p className="muted">Student Number</p>
                 <p className="scan-id">{scannedStudent.id}</p>
-                <p className="muted">{scannedStudent.course} · {scannedStudent.yearsection}</p>
+                <p className="muted">
+                  {scannedStudent.course}
+                  {scannedStudent.yearsection ? ` · ${scannedStudent.yearsection}` : ""}
+                </p>
               </div>
             )}
             {popupType === "confirm" ? (
@@ -313,7 +311,7 @@ export default function ScanPage() {
   return (
     <Suspense
       fallback={
-        <AppShell title="Scan">
+        <AppShell title="Scan" backTo="/host/dashboard">
           <p className="muted">Loading...</p>
         </AppShell>
       }

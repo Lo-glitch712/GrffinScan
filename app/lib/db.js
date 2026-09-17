@@ -1,4 +1,5 @@
 import { requireSupabase } from "./supabase";
+import { passwordsMatch, studentLoginPassword } from "./studentFormat";
 
 if (typeof window !== "undefined") {
   try {
@@ -143,11 +144,47 @@ async function removeStoredStudentPassword(studentId) {
   await writePasswordVault(vault);
 }
 
-export async function getStudents() {
+async function fetchAllRows(table, columns = "*", orderColumn = "id") {
   const supabase = requireSupabase();
-  const { data, error } = await supabase.from("students").select("*");
-  await throwIf(error);
-  return (data || [])
+  const pageSize = 1000;
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageSize - 1);
+    await throwIf(error);
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return rows;
+}
+
+export async function getStudents() {
+  const data = await fetchAllRows("students");
+  return data
+    .filter((student) => !isInternalStudentId(student.id))
+    .map((student) => withoutPassword(student));
+}
+
+async function getStudentsByIds(ids) {
+  const list = [...new Set((ids || []).map((id) => String(id).trim()).filter(Boolean))];
+  if (!list.length) return [];
+
+  const supabase = requireSupabase();
+  const found = [];
+  const chunkSize = 100;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const { data, error } = await supabase
+      .from("students")
+      .select("*")
+      .in("id", list.slice(i, i + chunkSize));
+    await throwIf(error);
+    found.push(...(data || []));
+  }
+  return found
     .filter((student) => !isInternalStudentId(student.id))
     .map((student) => withoutPassword(student));
 }
@@ -212,19 +249,17 @@ export async function loginStudent(id, password) {
   const studentId = String(id || "").trim();
   if (!studentId || isInternalStudentId(studentId)) return null;
 
-  const hasPasswordCol = await hasStudentPasswordColumn();
   const { data, error } = await supabase
     .from("students")
-    .select(
-      hasPasswordCol
-        ? "id, lastname, firstname, course, yearsection, password"
-        : "id, lastname, firstname, course, yearsection"
-    )
+    .select("*")
     .eq("id", studentId)
     .maybeSingle();
   await throwIf(error);
-  if (!data) return null;
-  if (!(await studentPasswordMatches(studentId, password, data.password))) return null;
+  if (!data || isInternalStudentId(data.id)) return null;
+
+  const generated = studentLoginPassword(data.firstname, data.lastname, data.id);
+  const storedOk = await studentPasswordMatches(studentId, password, data.password);
+  if (!storedOk && !passwordsMatch(password, generated)) return null;
   return withoutPassword(data);
 }
 
@@ -306,8 +341,18 @@ export async function saveStudent(student) {
 
 export async function updateStudent(id, fields) {
   const supabase = requireSupabase();
-  const { error } = await supabase.from("students").update(fields).eq("id", id);
-  await throwIf(error);
+  const attempts = [fields];
+  if ("middlename" in fields || "sex" in fields) {
+    const { middlename, sex, ...rest } = fields;
+    attempts.push(rest);
+  }
+  let lastError = null;
+  for (const payload of attempts) {
+    const { error } = await supabase.from("students").update(payload).eq("id", id);
+    if (!error) return;
+    lastError = error;
+  }
+  await throwIf(lastError);
 }
 
 export async function deleteStudent(id) {
@@ -320,6 +365,21 @@ export async function deleteStudent(id) {
   const { error } = await supabase.from("students").delete().eq("id", id);
   await throwIf(error);
   await removeStoredStudentPassword(id);
+}
+
+export async function deleteStudentsByIds(ids) {
+  const list = [...new Set((ids || []).map((id) => String(id).trim()).filter(Boolean))];
+  if (!list.length) return;
+
+  const supabase = requireSupabase();
+  const { error: attendanceError } = await supabase
+    .from("attendance")
+    .delete()
+    .in("student_id", list);
+  await throwIf(attendanceError);
+  const { error } = await supabase.from("students").delete().in("id", list);
+  await throwIf(error);
+  await Promise.all(list.map((id) => removeStoredStudentPassword(id)));
 }
 
 export async function deleteStudentsWithoutAttendance() {
@@ -348,12 +408,10 @@ export async function deleteStudentsWithoutAttendance() {
 
 export async function clearAllAttendance() {
   const supabase = requireSupabase();
-  const { error: attendanceError } = await supabase
+  const { error } = await supabase
     .from("attendance")
     .delete()
     .not("student_id", "is", null);
-  await throwIf(attendanceError);
-  const { error } = await supabase.from("students").delete().not("id", "is", null);
   await throwIf(error);
 }
 
@@ -402,6 +460,10 @@ export async function addEvent(name, { starts_at = "", ends_at = "" } = {}) {
 }
 
 export async function setEventTime(id, { starts_at, ends_at }) {
+  await updateEvent(id, { starts_at, ends_at });
+}
+
+export async function updateEvent(id, { name, starts_at, ends_at }) {
   const supabase = requireSupabase();
   const next = applyEventSchedule(
     {
@@ -410,14 +472,13 @@ export async function setEventTime(id, { starts_at, ends_at }) {
     },
     Date.now()
   );
-  const { error } = await supabase
-    .from("events")
-    .update({
-      starts_at: next.starts_at,
-      ends_at: next.ends_at,
-      is_open: next.is_open,
-    })
-    .eq("id", id);
+  const fields = {
+    starts_at: next.starts_at,
+    ends_at: next.ends_at,
+    is_open: next.is_open,
+  };
+  if (name != null) fields.name = String(name).trim();
+  const { error } = await supabase.from("events").update(fields).eq("id", id);
   await throwIf(error);
 }
 
@@ -439,9 +500,29 @@ export async function deleteEvent(id) {
 
 export async function getHosts() {
   const supabase = requireSupabase();
-  const { data, error } = await supabase.from("hosts").select("*");
+  const { data, error } = await supabase
+    .from("hosts")
+    .select("id, username, current_session");
   await throwIf(error);
   return data || [];
+}
+
+export async function addHost(username, password) {
+  const name = String(username || "").trim();
+  const pass = String(password || "");
+  if (!name || !pass) throw new Error("Username and password are required.");
+
+  const supabase = requireSupabase();
+  const { data: existing, error: findError } = await supabase
+    .from("hosts")
+    .select("id")
+    .eq("username", name)
+    .maybeSingle();
+  await throwIf(findError);
+  if (existing) throw new Error("That username is already taken.");
+
+  const { error } = await supabase.from("hosts").insert({ username: name, password: pass });
+  await throwIf(error);
 }
 
 export async function deleteHost(id) {
@@ -525,54 +606,272 @@ export async function getHostSession(id) {
   return data || null;
 }
 
-export async function getAttendance() {
+let attendanceCreatedAtEnabled;
+
+async function hasAttendanceCreatedAtColumn() {
+  if (attendanceCreatedAtEnabled !== undefined) return attendanceCreatedAtEnabled;
   const supabase = requireSupabase();
-  const { data, error } = await supabase.from("attendance").select("*");
-  await throwIf(error);
-  return data || [];
+  const { error } = await supabase.from("attendance").select("created_at").limit(0);
+  attendanceCreatedAtEnabled = !error;
+  return attendanceCreatedAtEnabled;
 }
 
-export async function getStudentRecords({ course, yearSection, search, page = 0, pageSize, limit } = {}) {
-  let students = await getStudents();
-  const attendance = await getAttendance();
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
 
-  if (course) students = students.filter((student) => student.course === course);
-  if (yearSection) students = students.filter((student) => student.yearsection === yearSection);
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
 
-  const query = String(search || "").trim().toLowerCase();
-  if (query) {
-    students = students.filter((student) => {
-      const hay = [
-        student.lastname,
-        student.firstname,
-        student.id,
-        student.course,
-        student.yearsection,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(query);
-    });
-  }
+function startOfWeek(date) {
+  const day = startOfDay(date);
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+  return day;
+}
 
-  students.sort((a, b) => {
+function attendanceDate(row, eventsById) {
+  const scanned = row?.created_at ? new Date(row.created_at) : null;
+  if (scanned && !Number.isNaN(scanned.getTime())) return scanned;
+  const eventId = Number(row?.event_id);
+  const event =
+    eventsById.get(Number.isNaN(eventId) ? row?.event_id : eventId) ||
+    eventsById.get(String(row?.event_id));
+  const scheduled = event?.starts_at ? new Date(event.starts_at) : null;
+  if (scheduled && !Number.isNaN(scheduled.getTime())) return scheduled;
+  return null;
+}
+
+function eventKey(eventId) {
+  const numericId = Number(eventId);
+  return Number.isNaN(numericId) ? eventId : numericId;
+}
+
+function sortStudents(students) {
+  return [...students].sort((a, b) => {
     const last = (a.lastname || "").localeCompare(b.lastname || "");
     if (last !== 0) return last;
     return (a.firstname || "").localeCompare(b.firstname || "");
   });
+}
 
-  if (limit) students = students.slice(0, limit);
-  if (pageSize) students = students.slice(page * pageSize, (page + 1) * pageSize);
+function filterStudents(students, { course, yearSection, search } = {}) {
+  let next = students;
+  if (course) next = next.filter((student) => student.course === course);
+  if (yearSection) next = next.filter((student) => student.yearsection === yearSection);
+  const query = String(search || "").trim().toLowerCase();
+  if (!query) return next;
+  return next.filter((student) => {
+    const hay = [
+      student.lastname,
+      student.firstname,
+      student.id,
+      student.course,
+      student.yearsection,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(query);
+  });
+}
 
+function attachEvents(students, attendance) {
   return students.map((student) => ({
     ...student,
     events: attendance
       .filter((row) => sameId(row.student_id, student.id))
-      .map((row) => {
-        const numericId = Number(row.event_id);
-        return Number.isNaN(numericId) ? row.event_id : numericId;
-      }),
+      .map((row) => eventKey(row.event_id)),
   }));
+}
+
+export function countPrograms(students) {
+  const counts = new Map();
+  for (const student of students) {
+    const name = String(student.course || "Unknown").trim() || "Unknown";
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+function periodMeta(date, groupBy) {
+  if (!date) {
+    return { key: "undated", label: "Undated", sortAt: 0 };
+  }
+
+  if (groupBy === "day") {
+    const start = startOfDay(date);
+    return {
+      key: `${start.getFullYear()}-${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`,
+      label: start.toLocaleDateString([], {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      sortAt: start.getTime(),
+    };
+  }
+
+  if (groupBy === "week") {
+    const start = startOfWeek(date);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const sameMonth = start.getMonth() === end.getMonth();
+    const startText = start.toLocaleDateString([], { month: "short", day: "numeric" });
+    const endText = end.toLocaleDateString([], sameMonth
+      ? { day: "numeric", year: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" });
+    return {
+      key: `${start.getFullYear()}-${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`,
+      label: `${startText} – ${endText}`,
+      sortAt: start.getTime(),
+    };
+  }
+
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  return {
+    key: `${start.getFullYear()}-${pad2(start.getMonth() + 1)}`,
+    label: start.toLocaleDateString([], { month: "long", year: "numeric" }),
+    sortAt: start.getTime(),
+  };
+}
+
+export function groupAttendanceByPeriod(students, attendance, events, groupBy) {
+  const eventsById = new Map();
+  for (const event of events || []) {
+    eventsById.set(event.id, event);
+    eventsById.set(String(event.id), event);
+    eventsById.set(Number(event.id), event);
+  }
+
+  const studentById = new Map((students || []).map((student) => [String(student.id), student]));
+  const buckets = new Map();
+
+  for (const row of attendance || []) {
+    const student = studentById.get(String(row.student_id));
+    if (!student) continue;
+
+    const meta = periodMeta(attendanceDate(row, eventsById), groupBy);
+    if (!buckets.has(meta.key)) {
+      buckets.set(meta.key, {
+        ...meta,
+        studentMap: new Map(),
+        eventIdsByStudent: new Map(),
+      });
+    }
+
+    const bucket = buckets.get(meta.key);
+    bucket.studentMap.set(String(student.id), student);
+    const ids = bucket.eventIdsByStudent.get(String(student.id)) || [];
+    ids.push(eventKey(row.event_id));
+    bucket.eventIdsByStudent.set(String(student.id), ids);
+  }
+
+  return [...buckets.values()]
+    .sort((a, b) => b.sortAt - a.sortAt)
+    .map((bucket) => {
+      const list = sortStudents([...bucket.studentMap.values()]);
+      return {
+        key: bucket.key,
+        label: bucket.label,
+        total: list.length,
+        programs: countPrograms(list),
+        students: list.map((student) => ({
+          ...student,
+          events: bucket.eventIdsByStudent.get(String(student.id)) || [],
+        })),
+      };
+    });
+}
+
+export function studentAttendedEvent(student, eventId) {
+  return (student?.events || []).some((id) => String(id) === String(eventId));
+}
+
+export async function getAttendance() {
+  const data = await fetchAllRows("attendance", "*", "student_id");
+  return data.filter(
+    (row) => row?.student_id != null && row?.event_id != null && !isInternalStudentId(row.student_id)
+  );
+}
+
+function emptyAttendanceView(events, groupBy) {
+  return {
+    events,
+    stats: { total: 0, programs: [] },
+    groups: groupBy && groupBy !== "all" ? [] : null,
+    records: [],
+    hasMore: false,
+    courses: [],
+    yearSections: [],
+  };
+}
+
+export async function getAttendanceView({
+  course,
+  yearSection,
+  search,
+  page = 0,
+  pageSize,
+  limit,
+  groupBy = "all",
+} = {}) {
+  const [attendance, events] = await Promise.all([getAttendance(), getEvents()]);
+  if (!attendance.length) return emptyAttendanceView(events, groupBy);
+
+  const scanned = await getStudentsByIds(attendance.map((row) => row.student_id));
+  const courses = [...new Set(scanned.map((student) => student.course).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const yearSections = [...new Set(
+    scanned
+      .filter((student) => !course || student.course === course)
+      .map((student) => student.yearsection)
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  const filtered = sortStudents(filterStudents(scanned, { course, yearSection, search }));
+  const allowed = new Set(filtered.map((student) => String(student.id)));
+  const rows = attendance.filter((row) => allowed.has(String(row.student_id)));
+  const stats = {
+    total: filtered.length,
+    programs: countPrograms(filtered),
+  };
+
+  if (groupBy && groupBy !== "all") {
+    return {
+      events,
+      stats,
+      groups: groupAttendanceByPeriod(filtered, rows, events, groupBy),
+      records: [],
+      hasMore: false,
+      courses,
+      yearSections,
+    };
+  }
+
+  let sliced = filtered;
+  if (limit) sliced = filtered.slice(0, limit);
+  else if (pageSize) sliced = filtered.slice(page * pageSize, (page + 1) * pageSize);
+
+  return {
+    events,
+    stats,
+    groups: null,
+    records: attachEvents(sliced, rows),
+    hasMore: Boolean(pageSize) && filtered.length > (page + 1) * pageSize,
+    courses,
+    yearSections,
+  };
+}
+
+export async function getStudentRecords(options = {}) {
+  const view = await getAttendanceView(options);
+  if (view.groups) {
+    return view.groups.flatMap((group) => group.students);
+  }
+  return view.records;
 }
 
 export async function findAttendance(studentId, eventId) {
@@ -589,9 +888,14 @@ export async function findAttendance(studentId, eventId) {
 
 export async function addAttendance(studentId, eventId) {
   const supabase = requireSupabase();
-  const { error } = await supabase
-    .from("attendance")
-    .insert([{ student_id: String(studentId), event_id: Number(eventId) || eventId }]);
+  const row = {
+    student_id: String(studentId),
+    event_id: Number(eventId) || eventId,
+  };
+  if (await hasAttendanceCreatedAtColumn()) {
+    row.created_at = new Date().toISOString();
+  }
+  const { error } = await supabase.from("attendance").insert([row]);
   await throwIf(error);
 }
 

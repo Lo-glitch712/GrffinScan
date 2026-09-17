@@ -67,15 +67,6 @@ export default function StudentPage() {
         <button className="btn" type="submit" disabled={loading}>
           {loading ? "Logging in..." : "Login"}
         </button>
-        <p className="auth-note">
-          Not registered in GriffinScan yet?{" "}
-          <button type="button" onClick={() => router.push("/student/register")}>
-            Create account
-          </button>
-        </p>
-        <button className="btn btn-ghost" type="button" onClick={() => router.push("/")}>
-          Back
-        </button>
       </form>
     </AppShell>
   );
