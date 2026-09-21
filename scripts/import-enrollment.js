@@ -55,15 +55,12 @@ function parseEnrollment(filePath) {
   return [...byId.values()];
 }
 
-function toRows(students, { extra, password, mergeName }) {
+function toRows(students, { extra, password }) {
   return students.map((student) => {
-    const firstname = mergeName
-      ? [student.firstname, student.middlename].filter(Boolean).join(" ")
-      : student.firstname;
     const row = {
       id: student.id,
       lastname: student.lastname,
-      firstname,
+      firstname: student.firstname,
       course: student.course,
       yearsection: student.yearsection,
     };
@@ -74,6 +71,41 @@ function toRows(students, { extra, password, mergeName }) {
     if (password) row.password = student.password;
     return row;
   });
+}
+
+const STUDENT_PROFILE_ID = "__gs_profile__";
+
+async function writeProfileVault(supabase, students) {
+  const vault = {};
+  for (const student of students) {
+    vault[student.id] = {
+      middlename: student.middlename || "",
+      sex: student.sex || "",
+    };
+  }
+  const lastname = JSON.stringify(vault);
+  const { data: existing, error: findError } = await supabase
+    .from("students")
+    .select("id")
+    .eq("id", STUDENT_PROFILE_ID)
+    .maybeSingle();
+  if (findError) throw findError;
+  if (existing) {
+    const { error } = await supabase
+      .from("students")
+      .update({ lastname })
+      .eq("id", STUDENT_PROFILE_ID);
+    if (error) throw error;
+    return;
+  }
+  const { error } = await supabase.from("students").insert({
+    id: STUDENT_PROFILE_ID,
+    lastname,
+    firstname: "system",
+    course: "SYS",
+    yearsection: "SYS",
+  });
+  if (error) throw error;
 }
 
 async function upsertAll(supabase, students, options) {
@@ -105,23 +137,27 @@ async function main() {
 
   const students = parseEnrollment(file);
   console.log(`Parsed ${students.length} students from enrollment list`);
-  const sample = students[0];
+  const sample = students.find((student) => student.id === "201920013") || students[0];
   if (sample) {
-    console.log(`Sample: ${sample.id} ${sample.lastname}, ${sample.firstname} ${sample.middlename} · ${sample.course} ${sample.yearsection}`);
+    console.log(
+      `Sample: ${sample.id} ${sample.lastname}, ${sample.firstname} / ${sample.middlename} · ${sample.sex} · ${sample.course} ${sample.yearsection}`
+    );
   }
 
   const supabase = createClient(url, key);
   const attempts = [
-    { extra: true, password: true, mergeName: false },
-    { extra: false, password: true, mergeName: true },
-    { extra: false, password: false, mergeName: true },
+    { extra: true, password: true },
+    { extra: false, password: true },
+    { extra: false, password: false },
   ];
 
   let lastError;
+  let usedExtra = false;
   for (const options of attempts) {
     try {
       await upsertAll(supabase, students, options);
       lastError = null;
+      usedExtra = options.extra;
       break;
     } catch (error) {
       lastError = error;
@@ -129,6 +165,18 @@ async function main() {
     }
   }
   if (lastError) throw lastError;
+
+  if (usedExtra) {
+    const { error: cleanupError } = await supabase
+      .from("students")
+      .delete()
+      .eq("id", STUDENT_PROFILE_ID);
+    if (cleanupError) throw cleanupError;
+    console.log("Removed temporary profile row");
+  } else {
+    await writeProfileVault(supabase, students);
+    console.log("Stored middle name and sex in profile vault");
+  }
 
   const { count, error } = await supabase
     .from("students")

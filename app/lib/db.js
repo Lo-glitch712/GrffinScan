@@ -53,7 +53,9 @@ function withoutPassword(student) {
 }
 
 const STUDENT_VAULT_ID = "__gs_vault__";
+const STUDENT_PROFILE_ID = "__gs_profile__";
 let passwordColumnEnabled;
+let profileColumnsEnabled;
 
 function isInternalStudentId(id) {
   return String(id || "").startsWith("__gs_");
@@ -84,30 +86,7 @@ async function readPasswordVault() {
 }
 
 async function writePasswordVault(vault) {
-  const supabase = requireSupabase();
-  const row = {
-    id: STUDENT_VAULT_ID,
-    lastname: JSON.stringify(vault),
-    firstname: "system",
-    course: "SYS",
-    yearsection: "SYS",
-  };
-  const { data: existing, error: findError } = await supabase
-    .from("students")
-    .select("id")
-    .eq("id", STUDENT_VAULT_ID)
-    .maybeSingle();
-  await throwIf(findError);
-  if (existing) {
-    const { error } = await supabase
-      .from("students")
-      .update({ lastname: row.lastname })
-      .eq("id", STUDENT_VAULT_ID);
-    await throwIf(error);
-    return;
-  }
-  const { error } = await supabase.from("students").insert(row);
-  await throwIf(error);
+  await writeInternalStudentRow(STUDENT_VAULT_ID, JSON.stringify(vault));
 }
 
 async function storeStudentPassword(studentId, password) {
@@ -144,6 +123,115 @@ async function removeStoredStudentPassword(studentId) {
   await writePasswordVault(vault);
 }
 
+async function hasStudentProfileColumns() {
+  if (profileColumnsEnabled !== undefined) return profileColumnsEnabled;
+  const supabase = requireSupabase();
+  const { error } = await supabase.from("students").select("middlename,sex").limit(0);
+  profileColumnsEnabled = !error;
+  return profileColumnsEnabled;
+}
+
+async function readProfileVault() {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from("students")
+    .select("lastname")
+    .eq("id", STUDENT_PROFILE_ID)
+    .maybeSingle();
+  await throwIf(error);
+  try {
+    const parsed = JSON.parse(data?.lastname || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeInternalStudentRow(id, lastname) {
+  const supabase = requireSupabase();
+  const row = {
+    id,
+    lastname,
+    firstname: "system",
+    course: "SYS",
+    yearsection: "SYS",
+  };
+  const { data: existing, error: findError } = await supabase
+    .from("students")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  await throwIf(findError);
+  if (existing) {
+    const { error } = await supabase.from("students").update({ lastname }).eq("id", id);
+    await throwIf(error);
+    return;
+  }
+  const { error } = await supabase.from("students").insert(row);
+  await throwIf(error);
+}
+
+async function writeProfileVault(vault) {
+  await writeInternalStudentRow(STUDENT_PROFILE_ID, JSON.stringify(vault));
+}
+
+function applyProfile(student, vault) {
+  if (!student) return student;
+  const extra = vault?.[student.id];
+  return {
+    ...student,
+    middlename: student.middlename || extra?.middlename || "",
+    sex: student.sex || extra?.sex || "",
+  };
+}
+
+async function withProfiles(students) {
+  const list = students || [];
+  if (!list.length) return list;
+  if (await hasStudentProfileColumns()) {
+    return list.map((student) => ({
+      ...student,
+      middlename: student.middlename || "",
+      sex: student.sex || "",
+    }));
+  }
+  const vault = await readProfileVault();
+  return list.map((student) => applyProfile(student, vault));
+}
+
+async function withProfile(student) {
+  if (!student) return null;
+  const [mapped] = await withProfiles([student]);
+  return mapped;
+}
+
+async function storeStudentProfile(studentId, fields) {
+  if (await hasStudentProfileColumns()) return;
+  const vault = await readProfileVault();
+  const current = vault[studentId] || {};
+  vault[studentId] = {
+    middlename:
+      "middlename" in fields ? String(fields.middlename || "").trim() : current.middlename || "",
+    sex: "sex" in fields ? String(fields.sex || "").trim() : current.sex || "",
+  };
+  await writeProfileVault(vault);
+}
+
+async function removeStoredStudentProfiles(ids) {
+  if (await hasStudentProfileColumns()) return;
+  const list = [...new Set((ids || []).map((id) => String(id)))];
+  if (!list.length) return;
+  const vault = await readProfileVault();
+  let changed = false;
+  for (const id of list) {
+    if (id in vault) {
+      delete vault[id];
+      changed = true;
+    }
+  }
+  if (changed) await writeProfileVault(vault);
+}
+
 async function fetchAllRows(table, columns = "*", orderColumn = "id") {
   const supabase = requireSupabase();
   const pageSize = 1000;
@@ -164,9 +252,9 @@ async function fetchAllRows(table, columns = "*", orderColumn = "id") {
 
 export async function getStudents() {
   const data = await fetchAllRows("students");
-  return data
-    .filter((student) => !isInternalStudentId(student.id))
-    .map((student) => withoutPassword(student));
+  return withProfiles(
+    data.filter((student) => !isInternalStudentId(student.id)).map((student) => withoutPassword(student))
+  );
 }
 
 async function getStudentsByIds(ids) {
@@ -184,9 +272,9 @@ async function getStudentsByIds(ids) {
     await throwIf(error);
     found.push(...(data || []));
   }
-  return found
-    .filter((student) => !isInternalStudentId(student.id))
-    .map((student) => withoutPassword(student));
+  return withProfiles(
+    found.filter((student) => !isInternalStudentId(student.id)).map((student) => withoutPassword(student))
+  );
 }
 
 export async function findStudentById(id) {
@@ -199,7 +287,7 @@ export async function findStudentById(id) {
     .maybeSingle();
   await throwIf(error);
   if (!data || isInternalStudentId(data.id)) return null;
-  return withoutPassword(data);
+  return withProfile(withoutPassword(data));
 }
 
 function barcodeIdCandidates(raw) {
@@ -260,7 +348,7 @@ export async function loginStudent(id, password) {
   const generated = studentLoginPassword(data.firstname, data.lastname, data.id);
   const storedOk = await studentPasswordMatches(studentId, password, data.password);
   if (!storedOk && !passwordsMatch(password, generated)) return null;
-  return withoutPassword(data);
+  return withProfile(withoutPassword(data));
 }
 
 export async function registerStudent(student) {
@@ -317,12 +405,15 @@ export async function registerStudent(student) {
   }
 
   await storeStudentPassword(id, student.password);
-  return withoutPassword(saved);
+  if ("middlename" in student || "sex" in student) {
+    await storeStudentProfile(id, student);
+  }
+  return withProfile(withoutPassword(saved));
 }
 
 export async function saveStudent(student) {
   const supabase = requireSupabase();
-  const { password, ...rest } = student;
+  const { password, middlename, sex, ...rest } = student;
   const record = {
     ...rest,
     created_at: student.created_at || new Date().toISOString(),
@@ -330,13 +421,20 @@ export async function saveStudent(student) {
   if (password && (await hasStudentPasswordColumn())) {
     record.password = password;
   }
+  if (await hasStudentProfileColumns()) {
+    record.middlename = middlename || "";
+    record.sex = sex || "";
+  }
   const { data, error } = await supabase
     .from("students")
     .insert([record])
     .select()
     .single();
   await throwIf(error);
-  return withoutPassword(data);
+  if (middlename || sex) {
+    await storeStudentProfile(data.id, { middlename, sex });
+  }
+  return withProfile(withoutPassword(data));
 }
 
 export async function updateStudent(id, fields) {
@@ -349,7 +447,12 @@ export async function updateStudent(id, fields) {
   let lastError = null;
   for (const payload of attempts) {
     const { error } = await supabase.from("students").update(payload).eq("id", id);
-    if (!error) return;
+    if (!error) {
+      if ("middlename" in fields || "sex" in fields) {
+        await storeStudentProfile(id, fields);
+      }
+      return;
+    }
     lastError = error;
   }
   await throwIf(lastError);
@@ -365,6 +468,7 @@ export async function deleteStudent(id) {
   const { error } = await supabase.from("students").delete().eq("id", id);
   await throwIf(error);
   await removeStoredStudentPassword(id);
+  await removeStoredStudentProfiles([id]);
 }
 
 export async function deleteStudentsByIds(ids) {
@@ -380,6 +484,7 @@ export async function deleteStudentsByIds(ids) {
   const { error } = await supabase.from("students").delete().in("id", list);
   await throwIf(error);
   await Promise.all(list.map((id) => removeStoredStudentPassword(id)));
+  await removeStoredStudentProfiles(list);
 }
 
 export async function deleteStudentsWithoutAttendance() {
@@ -399,11 +504,10 @@ export async function deleteStudentsWithoutAttendance() {
   );
   if (!unused.length) return;
 
-  const { error } = await supabase
-    .from("students")
-    .delete()
-    .in("id", unused.map((student) => student.id));
+  const unusedIds = unused.map((student) => student.id);
+  const { error } = await supabase.from("students").delete().in("id", unusedIds);
   await throwIf(error);
+  await removeStoredStudentProfiles(unusedIds);
 }
 
 export async function clearAllAttendance() {

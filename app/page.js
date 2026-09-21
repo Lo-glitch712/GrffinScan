@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import AppShell from "./components/AppShell";
 import { ensureDefaultAccounts } from "./lib/db";
 
 export default function Home() {
-  const router = useRouter();
-
   useEffect(() => {
     ensureDefaultAccounts().catch((err) => console.error(err));
   }, []);
@@ -18,12 +16,9 @@ export default function Home() {
         <img src="/griffin.png" alt="" className="griffin" />
       </div>
       <div className="stack">
-        <button className="btn" onClick={() => router.push("/student")}>
-          Student
-        </button>
-        <button className="btn btn-white" onClick={() => router.push("/host")}>
+        <Link href="/host" className="btn">
           Host
-        </button>
+        </Link>
       </div>
     </AppShell>
   );

@@ -7,7 +7,7 @@ export default function RegisterStudentPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/student");
+    router.replace("/");
   }, [router]);
 
   return null;

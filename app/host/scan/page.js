@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   addAttendance,
   findAttendance,
@@ -15,11 +15,9 @@ import AppShell from "../../components/AppShell";
 import Select from "../../components/Select";
 import { formatStudentName } from "../../lib/studentFormat";
 
-function ScanPageInner() {
+function ScanPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const qrMode = searchParams.get("mode") === "qr";
-  const scanMode = qrMode ? "qr" : "barcode";
+  const scanMode = "barcode";
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState("");
   const [popupType, setPopupType] = useState(null);
@@ -27,11 +25,12 @@ function ScanPageInner() {
   const [scannedStudent, setScannedStudent] = useState(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(true);
 
   const selectedEventRef = useRef(selectedEvent);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const scanLockRef = useRef(false);
+  const scanLockRef = useRef(true);
   const handleScanRef = useRef(null);
 
   useEffect(() => {
@@ -179,6 +178,11 @@ function ScanPageInner() {
     setPopupType(null);
     setPopupMessage("");
     setSaving(false);
+    if (!showTutorial) scanLockRef.current = false;
+  };
+
+  const dismissTutorial = () => {
+    setShowTutorial(false);
     scanLockRef.current = false;
   };
 
@@ -213,7 +217,7 @@ function ScanPageInner() {
           : "is-idle";
 
   return (
-    <AppShell title={qrMode ? "Scan QR Code" : "Scan Barcode"} backTo="/host/dashboard">
+    <AppShell title="Scan Barcode" backTo="/host/dashboard">
       <div className="stack">
         {events.length > 0 ? (
           <Select
@@ -231,25 +235,21 @@ function ScanPageInner() {
           <p className="muted">No open events available.</p>
         )}
 
-        <div className={`scan-stage ${qrMode ? "is-qr" : ""}`}>
+        <div className="scan-stage">
           <video
             ref={videoRef}
-            className={`scan-video${qrMode ? " is-qr" : ""}`}
+            className="scan-video"
             muted
             playsInline
             autoPlay
           />
-          <div className={`scan-overlay${qrMode ? " is-qr" : ""}`} aria-hidden="true">
-            <div className={`scan-window${qrMode ? " is-qr" : ""}`} />
+          <div className="scan-overlay" aria-hidden="true">
+            <div className="scan-window" />
           </div>
           <canvas ref={canvasRef} className="scan-canvas" />
         </div>
         <p className="muted scan-hint">
-          {ready
-            ? qrMode
-              ? "Align the student QR inside the gold square"
-              : "Fill the gold box with the barcode on the ID"
-            : "Starting camera..."}
+          {ready ? "Fill the gold box with the barcode on the ID" : "Starting camera..."}
         </p>
 
         <div className={`scan-result ${resultClass}`}>
@@ -269,7 +269,24 @@ function ScanPageInner() {
         </div>
       </div>
 
-      {popupType && typeof document !== "undefined" && createPortal(
+      {showTutorial && typeof document !== "undefined" && createPortal(
+        <div className="overlay">
+          <div className="modal modal-solid confirm-dialog tutorial-dialog" onClick={(event) => event.stopPropagation()}>
+            <h3>How to scan</h3>
+            <ol className="tutorial-steps">
+              <li>Scan carefully. Keep the ID still and fill the gold box with the barcode.</li>
+              <li>If the ID does not scan, take it out of its case.</li>
+              <li>Use a clear, HD camera for the scanner.</li>
+            </ol>
+            <button className="btn" onClick={dismissTutorial}>
+              Got it
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {popupType && !showTutorial && typeof document !== "undefined" && createPortal(
         <div className="overlay" onClick={closePopup}>
           <div className="modal modal-solid confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <h3>{popupMessage}</h3>
@@ -307,16 +324,4 @@ function ScanPageInner() {
   );
 }
 
-export default function ScanPage() {
-  return (
-    <Suspense
-      fallback={
-        <AppShell title="Scan" backTo="/host/dashboard">
-          <p className="muted">Loading...</p>
-        </AppShell>
-      }
-    >
-      <ScanPageInner />
-    </Suspense>
-  );
-}
+export default ScanPage;

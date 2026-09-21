@@ -9,7 +9,10 @@ const nextConfig = {
       "sb_publishable_nxZC6BKIy5O3QmBgKhudLA_eHNYSv2O",
   },
   async redirects() {
-    return [{ source: "/student/register", destination: "/student", permanent: false }];
+    return [
+      { source: "/student", destination: "/", permanent: false },
+      { source: "/student/:path*", destination: "/", permanent: false },
+    ];
   },
   async headers() {
     return [

@@ -72,9 +72,6 @@ export default function HostDashboard() {
         <button className="btn" onClick={() => router.push("/host/scan")}>
           Scan Barcode
         </button>
-        <button className="btn" onClick={() => router.push("/host/scan?mode=qr")}>
-          Scan QR Code
-        </button>
         <button className="btn" onClick={() => router.push("/host/attendance")}>
           Attendance
         </button>
